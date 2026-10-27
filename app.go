@@ -23,15 +23,16 @@ import (
 var webFS embed.FS
 
 type app struct {
-	cfg   config
-	hub   *hubClient
-	live  *broadcaster
-	users *userStore
-	sess  *sessions
-	oidc  *oidcLogin
-	limit *limiter
-	pages map[string]*template.Template
-	proxy *httputil.ReverseProxy
+	cfg          config
+	hub          *hubClient
+	live         *broadcaster
+	users        *userStore
+	sess         *sessions
+	oidc         *oidcLogin
+	limit        *limiter
+	pages        map[string]*template.Template
+	proxy        *httputil.ReverseProxy
+	callbackPath string
 }
 
 func newApp(ctx context.Context, cfg config) (*app, error) {
@@ -40,6 +41,13 @@ func newApp(ctx context.Context, cfg config) (*app, error) {
 	}
 	if cfg.oidcIssuer != "" && cfg.publicURL == "" {
 		return nil, errors.New("OIDC_ISSUER needs SYNAPSE_PUBLIC_URL for the sign-in callback")
+	}
+	if cfg.oidcRedirect == "" {
+		cfg.oidcRedirect = cfg.publicURL + "/auth/callback"
+	}
+	callback, err := url.Parse(cfg.oidcRedirect)
+	if err != nil || !strings.HasPrefix(callback.Path, "/") {
+		return nil, fmt.Errorf("OIDC_REDIRECT_URL %q is not a URL", cfg.oidcRedirect)
 	}
 	hubURL, err := url.Parse(cfg.hubURL)
 	if err != nil || hubURL.Host == "" {
@@ -57,13 +65,14 @@ func newApp(ctx context.Context, cfg config) (*app, error) {
 		return nil, err
 	}
 	a := &app{
-		cfg:   cfg,
-		hub:   &hubClient{base: cfg.hubURL, tokenDir: cfg.tokenDir, http: &http.Client{Timeout: 60 * time.Second}},
-		live:  newBroadcaster(),
-		users: users,
-		sess:  &sessions{key: key, secure: strings.HasPrefix(cfg.publicURL, "https://")},
-		limit: &limiter{hits: map[string][]time.Time{}},
-		pages: map[string]*template.Template{},
+		cfg:          cfg,
+		hub:          &hubClient{base: cfg.hubURL, tokenDir: cfg.tokenDir, http: &http.Client{Timeout: 60 * time.Second}},
+		live:         newBroadcaster(),
+		users:        users,
+		sess:         &sessions{key: key, secure: strings.HasPrefix(cfg.publicURL, "https://")},
+		limit:        &limiter{hits: map[string][]time.Time{}},
+		pages:        map[string]*template.Template{},
+		callbackPath: callback.Path,
 		proxy: &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(hubURL)
 			r.SetXForwarded()
@@ -94,7 +103,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /login", a.loginSubmit)
 	mux.HandleFunc("POST /logout", a.logout)
 	mux.HandleFunc("GET /auth/oidc", a.needOIDC(a.oidcStart))
-	mux.HandleFunc("GET /auth/callback", a.needOIDC(a.oidcCallback))
+	mux.HandleFunc("GET "+a.callbackPath, a.needOIDC(a.oidcCallback))
 	mux.HandleFunc("GET /{$}", a.signedIn(a.nodesPage))
 	mux.HandleFunc("GET /node/{name}", a.signedIn(a.nodePage))
 	mux.HandleFunc("GET /add", a.signedIn(a.addPage))

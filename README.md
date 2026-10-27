@@ -49,7 +49,8 @@ containers keeps it.
 | `SYNAPSE_NODES` | `auto` | boards on the hub's own USB to connect at start |
 | `DASHBOARD_LOCAL_LOGIN` | `true` | `false` turns off name-and-password sign-in, leaving OIDC only |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | empty | sign in through your identity provider (Authelia, Authentik, Keycloak, Pocket ID, Google); register `<SYNAPSE_PUBLIC_URL>/auth/callback` as the redirect |
-| `OIDC_ADMIN_GROUP` | empty | when set, only members of this group are admins and everyone else signed in by OIDC is a viewer; when empty, every OIDC user is an admin |
+| `OIDC_REDIRECT_URL` | `<SYNAPSE_PUBLIC_URL>/auth/callback` | the callback to use when your identity provider already has another one registered |
+| `OIDC_ADMIN_GROUP` | empty | when set, only members of this group are admins and everyone else signed in by OIDC is a viewer; when empty, every OIDC user is an admin; the `groups` scope is asked for only when this is set (`OIDC_GROUPS_CLAIM` names the claim, default `groups`) |
 
 ## People
 

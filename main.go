@@ -15,18 +15,19 @@ import (
 var version = "dev"
 
 type config struct {
-	addr       string
-	hubURL     string
-	tokenDir   string
-	dataDir    string
-	publicURL  string
-	localLogin bool
-	oidcIssuer string
-	oidcID     string
-	oidcSecret string
-	oidcAdmin  string
-	oidcClaim  string
-	pollEvery  time.Duration
+	addr         string
+	hubURL       string
+	tokenDir     string
+	dataDir      string
+	publicURL    string
+	localLogin   bool
+	oidcIssuer   string
+	oidcID       string
+	oidcSecret   string
+	oidcAdmin    string
+	oidcClaim    string
+	oidcRedirect string
+	pollEvery    time.Duration
 }
 
 func env(name, def string) string {
@@ -38,18 +39,19 @@ func env(name, def string) string {
 
 func loadConfig() config {
 	return config{
-		addr:       env("DASHBOARD_ADDR", ":8080"),
-		hubURL:     strings.TrimRight(env("SYNAPSE_HUB_URL", "http://hub:4010"), "/"),
-		tokenDir:   env("SYNAPSE_TOKEN_DIR", "/data/tokens"),
-		dataDir:    env("DASHBOARD_DATA", "/data/dashboard"),
-		publicURL:  strings.TrimRight(env("SYNAPSE_PUBLIC_URL", ""), "/"),
-		localLogin: env("DASHBOARD_LOCAL_LOGIN", "true") != "false",
-		oidcIssuer: env("OIDC_ISSUER", ""),
-		oidcID:     env("OIDC_CLIENT_ID", ""),
-		oidcSecret: env("OIDC_CLIENT_SECRET", ""),
-		oidcAdmin:  env("OIDC_ADMIN_GROUP", ""),
-		oidcClaim:  env("OIDC_GROUPS_CLAIM", "groups"),
-		pollEvery:  time.Second,
+		addr:         env("DASHBOARD_ADDR", ":8080"),
+		hubURL:       strings.TrimRight(env("SYNAPSE_HUB_URL", "http://hub:4010"), "/"),
+		tokenDir:     env("SYNAPSE_TOKEN_DIR", "/data/tokens"),
+		dataDir:      env("DASHBOARD_DATA", "/data/dashboard"),
+		publicURL:    strings.TrimRight(env("SYNAPSE_PUBLIC_URL", ""), "/"),
+		localLogin:   env("DASHBOARD_LOCAL_LOGIN", "true") != "false",
+		oidcIssuer:   env("OIDC_ISSUER", ""),
+		oidcID:       env("OIDC_CLIENT_ID", ""),
+		oidcSecret:   env("OIDC_CLIENT_SECRET", ""),
+		oidcAdmin:    env("OIDC_ADMIN_GROUP", ""),
+		oidcClaim:    env("OIDC_GROUPS_CLAIM", "groups"),
+		oidcRedirect: env("OIDC_REDIRECT_URL", ""),
+		pollEvery:    time.Second,
 	}
 }
 

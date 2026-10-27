@@ -25,13 +25,17 @@ func newOIDC(ctx context.Context, cfg config) (*oidcLogin, error) {
 	if err != nil {
 		return nil, err
 	}
+	scopes := []string{oidc.ScopeOpenID, "profile", "email"}
+	if cfg.oidcAdmin != "" {
+		scopes = append(scopes, cfg.oidcClaim)
+	}
 	return &oidcLogin{
 		provider: p,
 		verifier: p.Verifier(&oidc.Config{ClientID: cfg.oidcID}),
 		conf: oauth2.Config{
 			ClientID: cfg.oidcID, ClientSecret: cfg.oidcSecret, Endpoint: p.Endpoint(),
-			RedirectURL: cfg.publicURL + "/auth/callback",
-			Scopes:      []string{oidc.ScopeOpenID, "profile", "email", cfg.oidcClaim},
+			RedirectURL: cfg.oidcRedirect,
+			Scopes:      scopes,
 		},
 		admin: cfg.oidcAdmin,
 		claim: cfg.oidcClaim,
