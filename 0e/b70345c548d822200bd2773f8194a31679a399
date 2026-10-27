@@ -1,0 +1,14 @@
+.github/workflows/ci.yml
+  h_3524af15b776cc 16-17,31-34,41,50,58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0eb70345c548d822200bd2773f8194a31679a399",
+  "prompts": {},
+  "humans": {
+    "h_3524af15b776cc": {
+      "author": "jamubc <150970140+jamubc@users.noreply.github.com>"
+    }
+  }
+}
