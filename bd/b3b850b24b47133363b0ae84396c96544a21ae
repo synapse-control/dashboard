@@ -1,0 +1,77 @@
+web/login.html
+  s_f029ed386c5677::t_b51ca7a2373b7f 1-13
+web/static/icon.svg
+  s_f029ed386c5677::t_2022d32b0af6ba 1
+oidc.go
+  s_f029ed386c5677::t_c3b38743e7919b 1-99
+web/static/app.js
+  s_f029ed386c5677::t_a4d68d135be09f 79,91,175
+  s_f029ed386c5677::t_ef95ffbc0942ea 1-78,80-90,92-174,176-232
+web/node.html
+  s_f029ed386c5677::t_b51ca7a2373b7f 1-21
+web/static/app.css
+  s_f029ed386c5677::t_2022d32b0af6ba 1-79
+.github/dependabot.yml
+  s_f029ed386c5677::t_7e354abae0bb0e 1-14
+web/setup.html
+  s_f029ed386c5677::t_b51ca7a2373b7f 1-12
+web/nodes.html
+  s_f029ed386c5677::t_b51ca7a2373b7f 1-8
+auth.go
+  s_f029ed386c5677::t_cb5dc2122e9fe0 1-271
+app_test.go
+  s_f029ed386c5677::t_a4d68d135be09f 1-222
+hub.go
+  s_f029ed386c5677::t_39c91cc949df6c 1-66,69-71,77-83,87,90-130,132-234
+  s_f029ed386c5677::t_688e69370723e3 67-68,72-76,84-86,88-89,131
+web/add.html
+  s_f029ed386c5677::t_e80d0366c9dc8d 11,18
+  s_f029ed386c5677::t_b51ca7a2373b7f 1-10,12-17,19-39
+web/error.html
+  s_f029ed386c5677::t_b51ca7a2373b7f 1
+Dockerfile
+  s_f029ed386c5677::t_aed6d7243c9e62 1
+  s_f029ed386c5677::t_80fd30f8a6e887 2-16
+web/users.html
+  s_f029ed386c5677::t_b51ca7a2373b7f 1-24
+.github/workflows/ci.yml
+  s_f029ed386c5677::t_7e354abae0bb0e 1-61
+go.mod
+  s_f029ed386c5677::t_d5e7390fde053f 1-5,9
+  s_f029ed386c5677::t_2022d32b0af6ba 6-8,10-11
+main.go
+  s_f029ed386c5677::t_d722c5c4a2c654 1-17,30-86
+  s_f029ed386c5677::t_2022d32b0af6ba 18-29
+web/layout.html
+  s_f029ed386c5677::t_b51ca7a2373b7f 1-32
+app.go
+  s_f029ed386c5677::t_e04c249c325581 1-368
+.dockerignore
+  s_f029ed386c5677::t_2f77a25cb61cd8 1-5
+.env.example
+  s_f029ed386c5677::t_be6b7ca944cad5 1-10
+.gitignore
+  s_f029ed386c5677::t_20e56768da9622 1-2
+README.md
+  s_f029ed386c5677::t_c8c7eadfa5f238 1-97
+compose.yaml
+  s_f029ed386c5677::t_ebc074295bdeaa 1-36
+go.sum
+  s_f029ed386c5677::t_478fe32654b062 1-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bdb3b850b24b47133363b0ae84396c96544a21ae",
+  "prompts": {},
+  "sessions": {
+    "s_f029ed386c5677": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026982f1-ff1f-4549-b84f-10fb27c7086a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "jamubc <150970140+jamubc@users.noreply.github.com>"
+    }
+  }
+}
