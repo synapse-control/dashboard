@@ -1,0 +1,36 @@
+name: synapse-control
+
+services:
+  hub:
+    image: ghcr.io/synapse-control/hub:${SYNAPSE_HUB_TAG:-0.2}
+    restart: unless-stopped
+    environment:
+      SYNAPSE_NODES: ${SYNAPSE_NODES:-auto}
+    volumes:
+      - synapse-data:/data
+    # devices:
+    #   - /dev/ttyACM0:/dev/ttyACM0
+    # group_add:
+    #   - "${SERIAL_GID:-984}"
+
+  dashboard:
+    image: ghcr.io/synapse-control/dashboard:${SYNAPSE_DASHBOARD_TAG:-0.1}
+    restart: unless-stopped
+    depends_on:
+      hub:
+        condition: service_healthy
+    ports:
+      - "${SYNAPSE_PORT:-8080}:8080"
+    environment:
+      SYNAPSE_HUB_URL: http://hub:4010
+      SYNAPSE_PUBLIC_URL: ${SYNAPSE_PUBLIC_URL:-}
+      DASHBOARD_LOCAL_LOGIN: ${DASHBOARD_LOCAL_LOGIN:-true}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_ADMIN_GROUP: ${OIDC_ADMIN_GROUP:-}
+    volumes:
+      - synapse-data:/data
+
+volumes:
+  synapse-data:

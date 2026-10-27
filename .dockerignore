@@ -1,0 +1,5 @@
+.git
+.github
+compose.yaml
+.env
+*.md

@@ -1,0 +1,39 @@
+{{define "body"}}
+<h1>Add a board</h1>
+<p>Boards come to the hub: each one dials <code>{{.Data.NodesURL}}</code> and presents the node key. Whoever can reach that address and holds the key can join, so keep the key private.</p>
+<section class="card">
+  <h2>Node key</h2>
+  <pre class="copy">{{.Data.Key}}</pre>
+</section>
+<section class="card">
+  <h2>An ESP32 on Wi-Fi</h2>
+  <p>Plug it in over USB once. It stores the Wi-Fi and the hub address in its flash, then dials in by itself on any power supply.</p>
+  <pre class="copy">docker run --rm --device /dev/ttyUSB0 --group-add "$(stat -c %g /dev/ttyUSB0)" {{.Data.Image}} \
+  npx tsx src/cli.ts provision /dev/ttyUSB0 --ssid '&lt;wifi name&gt;' --pass '&lt;wifi password&gt;' \
+  --hub {{.Data.NodesURL}} --key {{.Data.Key}}</pre>
+</section>
+<section class="card">
+  <h2>A board on a computer's USB (Uno, Nano, any Synapse board)</h2>
+  <p>A bridge beside the board carries it to the hub and redials if the link drops.</p>
+  <pre class="copy">docker run -d --restart unless-stopped --device /dev/ttyACM0 --group-add "$(stat -c %g /dev/ttyACM0)" \
+  -e SYNAPSE_NODE_KEY={{.Data.Key}} {{.Data.Image}} \
+  npx tsx src/cli.ts bridge /dev/ttyACM0 --to {{.Data.NodesURL}}</pre>
+  <p class="muted">On a Mac, Docker cannot reach USB: run the same command from a checkout of the harness with <code>npm run synapse -- bridge …</code>. A board with no Synapse firmware yet is flashed with <code>npm run synapse -- flash &lt;port&gt;</code> from the harness.</p>
+</section>
+{{if .Admin}}
+<section class="card">
+  <div class="head"><h2>Boards on the hub's own USB</h2><button id="scan" type="button">Scan</button></div>
+  <div id="scan-out" class="scroll"><p class="muted">Only when the hub container was given the device.</p></div>
+</section>
+<section class="card">
+  <h2>A board that listens on the network</h2>
+  <form id="connect" class="row">
+    <input name="host" placeholder="host" required>
+    <input name="port" placeholder="port" value="4001" required>
+    <input name="name" placeholder="name (optional)">
+    <button type="submit">Connect</button>
+  </form>
+  <p id="connect-out" class="muted"></p>
+</section>
+{{end}}
+{{end}}
