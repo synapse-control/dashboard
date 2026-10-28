@@ -1,0 +1,48 @@
+hub.go
+  s_f029ed386c5677::t_8e7ff30e1c8446 104-107
+web/static/app.js
+  s_f029ed386c5677::t_851d131c58dd14 1092
+  s_f029ed386c5677::t_501b0d47f7e9cb 582-589
+  s_f029ed386c5677::t_c9279cfa9ef269 1095
+  s_f029ed386c5677::t_a7c96f756ed991 1035
+  s_f029ed386c5677::t_7c7b29b75b6960 1540-1544
+  s_f029ed386c5677::t_65db2ffe780b05 635,639-651,654-669
+  s_f029ed386c5677::t_c0b893c50f1c89 507-514
+  s_f029ed386c5677::t_e39b41cffef9f5 612-614,616
+  s_f029ed386c5677::t_4ca6675ff077de 600,602,605-606
+  s_f029ed386c5677::t_552b202f0def49 1669
+  s_f029ed386c5677::t_3f08fd72c6e710 554-556,558
+  s_f029ed386c5677::t_354dfe6c8e043a 462
+  s_f029ed386c5677::t_c22ed796dc655e 520-526
+  s_f029ed386c5677::t_9f21d18871bcfd 1123-1129,1132
+  s_f029ed386c5677::t_30e07e9e21811a 1057-1058
+  s_f029ed386c5677::t_ddfc06786e6ab1 1108
+README.md
+  s_f029ed386c5677::t_930e2d638fda6e 27
+  s_f029ed386c5677::t_5ce510aee05750 122
+  s_f029ed386c5677::t_1363fbf4d43d0c 127
+  s_f029ed386c5677::t_f845abd97ce829 109-110
+  s_f029ed386c5677::t_cef3313b3c58b8 71
+  s_f029ed386c5677::t_7ecc87c849a5fd 93-99
+compose.yaml
+  s_f029ed386c5677::t_8984eb2f9b3f0f 5
+  s_f029ed386c5677::t_c9b75850402ba6 26
+.env.example
+  s_f029ed386c5677::t_831a67b5bd9ac7 4-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1549cb16c1d0844c5be5ba0829a3803405769240",
+  "prompts": {},
+  "sessions": {
+    "s_f029ed386c5677": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026982f1-ff1f-4549-b84f-10fb27c7086a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "jamubc <150970140+jamubc@users.noreply.github.com>"
+    }
+  }
+}
