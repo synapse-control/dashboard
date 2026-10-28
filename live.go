@@ -101,6 +101,9 @@ func (a *app) observe(s snapshot) {
 	}
 	if !wasUp && !first {
 		a.log("hub.up", false, "", "The hub answers again", nil)
+		if a.rejoinUSB(s) {
+			return
+		}
 	}
 	now := time.Now()
 	var fresh, joined, dropped []device
@@ -172,6 +175,31 @@ func (a *app) observe(s snapshot) {
 			a.log("node.brownout", true, n.Node, n.Node+" browned out and holds its radio off", nil)
 		}
 	}
+}
+
+func (a *app) rejoinUSB(s snapshot) bool {
+	held := map[string]bool{}
+	for _, n := range s.Nodes {
+		held[n.Node] = true
+	}
+	var back []device
+	a.store.read(func(st *state) {
+		for _, d := range st.Devices {
+			if d.Online && !d.Simulated && !held[d.Node] && strings.HasPrefix(d.Where, "/dev/") {
+				back = append(back, d)
+			}
+		}
+	})
+	for _, d := range back {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		args, _ := json.Marshal(map[string]string{"port": d.Where})
+		status, body, err := a.hub.call(ctx, "connect_node", true, "user:dashboard", args)
+		cancel()
+		if err != nil || status != http.StatusOK {
+			a.log("node.dropped", true, d.Node, fmt.Sprintf("%s did not come back on %s after the hub restarted: %s", d.Name, d.Where, hubError(status, body, err)), nil)
+		}
+	}
+	return len(back) > 0
 }
 
 func (a *app) sampleLoop(ctx context.Context) {

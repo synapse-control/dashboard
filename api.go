@@ -95,7 +95,7 @@ func (a *app) apiState(w http.ResponseWriter, r *http.Request, s session) {
 		"hub":       live,
 		"hub_url":   a.cfg.hubURL,
 		"nodes_url": a.nodesURL(r),
-		"hub_image": env("SYNAPSE_HUB_IMAGE", "ghcr.io/synapse-control/hub:0.2"),
+		"hub_image": env("SYNAPSE_HUB_IMAGE", "ghcr.io/synapse-control/hub:0.3"),
 		"devices":   st.Devices,
 		"channels":  chans,
 		"rules":     st.Rules,

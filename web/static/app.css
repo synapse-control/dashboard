@@ -284,6 +284,16 @@ textarea.field-input { resize: vertical; min-height: 60px; }
 .py3 { padding: .75rem 0; }
 .mt1 { margin-top: .25rem; }
 .steps { list-style: decimal; padding-left: 1.25rem; }
+.checks { display: flex; flex-direction: column; gap: .5rem; font-size: 14px; color: hsl(var(--default-700)); }
+.checks li { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
+.checks li::before { content: ""; width: 10px; height: 10px; border-radius: 9999px; flex-shrink: 0; background: hsl(var(--default-300)); }
+.checks li.done::before { background: hsl(var(--success)); }
+.checks li.now::before { background: rgb(var(--primary)); animation: pulse 1s ease-in-out infinite alternate; }
+.checks li.bad { color: hsl(var(--danger-600)); }
+.checks li.bad::before { background: hsl(var(--danger)); }
+@keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
+.meter { height: 8px; border-radius: 9999px; background: hsl(var(--default-100)); overflow: hidden; }
+.meter span { display: block; height: 100%; width: 0; background: rgb(var(--primary)); transition: width .2s; }
 .field.duty { width: 5.5rem; }
 .self-center { align-self: center; }
 .span2 { grid-column: span 2 / span 2; }

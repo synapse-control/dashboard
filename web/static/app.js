@@ -179,7 +179,7 @@ function sections() {
     {
       key: "devices", label: "Device Management", icon: ICON.devices, items: [
         { key: "fleet", label: "Device Fleet", nav: "devices" },
-        { key: "provision", label: "Provisioning", nav: "provisioning" },
+        { key: "provision", label: "Add a Board", nav: "provisioning" },
       ],
     },
     {
@@ -277,13 +277,15 @@ function renderView() {
   live();
 }
 
+const PART_HTML = new WeakMap();
 function refresh(reason) {
   const v = VIEWS[S.nav];
   if (!S.st || !v.parts) return;
   for (const [name, fn] of Object.entries(v.parts)) {
     if (reason && !(v.deps?.[name] ?? []).includes(reason)) continue;
     const el = $(`[data-part="${name}"]`);
-    if (el) el.innerHTML = fn();
+    const html = el && fn();
+    if (el && PART_HTML.get(el) !== html) { el.innerHTML = html; PART_HTML.set(el, html); }
   }
   live();
 }
@@ -321,6 +323,7 @@ function live() {
   }
   for (const el of $$("[data-spark]")) el.innerHTML = spark(el.dataset.spark);
   for (const el of $$("[data-h]")) el.style.height = `${el.dataset.h}%`;
+  for (const el of $$("[data-w]")) el.style.width = `${el.dataset.w}%`;
   for (const el of $$("[data-chanerr]")) el.textContent = S.chanErr[el.dataset.chanerr] ?? "";
   for (const el of $$("[data-chanstate]")) {
     const c = channel(el.dataset.chanstate);
@@ -391,7 +394,7 @@ VIEWS.overview = {
     </div>
     <div class="stack">
       ${card({ header: `<h3 class="h-md">System health</h3>`, body: `<ul class="status-list" data-part="health"></ul>` })}
-      ${card({ header: `<h3 class="h-md">Quick actions</h3>`, body: `<div class="stack tight">${btn("Connect device", { act: "go", data: { nav: "provisioning" }, color: "primary" })}${btn("Record a pin", { act: "go", data: { nav: "realtime" }, variant: "light" })}${btn("Create automation", { act: "go", data: { nav: "automations" }, variant: "light" })}</div>` })}
+      ${card({ header: `<h3 class="h-md">Quick actions</h3>`, body: `<div class="stack tight">${btn("Add a board", { act: "go", data: { nav: "provisioning" }, color: "primary" })}${btn("Record a pin", { act: "go", data: { nav: "realtime" }, variant: "light" })}${btn("Create automation", { act: "go", data: { nav: "automations" }, variant: "light" })}</div>` })}
     </div>
   </div>`,
   parts: {
@@ -476,31 +479,348 @@ function bringIn() {
   const key = S.st.node_key || "<node key: ask an admin>";
   const url = S.st.nodes_url;
   const image = S.st.hub_image;
-  const bridge = `docker run -d --restart unless-stopped --network host --device /dev/ttyACM0 --group-add "$(stat -c %g /dev/ttyACM0)" \\\n  -e SYNAPSE_NODE_KEY=${key} ${image} \\\n  npx tsx src/cli.ts bridge /dev/ttyACM0 --to ${url}`;
-  const provision = `docker run --rm --network host --device /dev/ttyUSB0 --group-add "$(stat -c %g /dev/ttyUSB0)" ${image} \\\n  npx tsx src/cli.ts provision /dev/ttyUSB0 --ssid '<wifi name>' --pass '<wifi password>' \\\n  --hub ${url} --key ${key}`;
-  return { bridge, provision, key, url };
+  const bridge = `docker run -d --name synapse-bridge --restart unless-stopped --network host --user 0 --cap-drop ALL --security-opt no-new-privileges \\\n  --device-cgroup-rule 'c 188:* rmw' --device-cgroup-rule 'c 166:* rmw' \\\n  --mount type=bind,source=/dev,target=/host/dev,readonly,bind-recursive=disabled -e SYNAPSE_DEV_DIR=/host/dev \\\n  -e SYNAPSE_NODE_KEY=${key} ${image} \\\n  npx tsx src/cli.ts bridge auto --to ${url}`;
+  return { bridge, key, url };
+}
+
+const USB_COMPOSE = `    environment:
+      SYNAPSE_DEV_DIR: /host/dev
+    group_add:
+      - "\${SYNAPSE_SERIAL_GID:-dialout}"
+    device_cgroup_rules:
+      - "c 188:* rmw"
+      - "c 166:* rmw"
+    volumes:
+      - type: bind
+        source: /dev
+        target: /host/dev
+        read_only: true
+        bind:
+          create_host_path: false
+          recursive: disabled`;
+
+const newer = (a, b) => {
+  const x = String(a ?? "0").split(".").map(Number), y = String(b ?? "0").split(".").map(Number);
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+};
+const boardName = (b) => ({ "esp32-devkit": "ESP32 DevKit", "arduino-uno": "Arduino Uno" })[b] ?? b;
+const latestFw = () => S.manifest?.fw;
+const portLabel = (p) => (p.candidates ?? []).filter((c) => c !== "unknown" && c !== "other").join(" or ") || "a USB serial board";
+
+S.usb = { ports: null, hidden: [], ids: {}, work: {}, err: "" };
+S.manifest = null;
+
+async function loadManifest() {
+  if (S.manifest) return;
+  try {
+    const res = await fetch("/firmware/manifest.json");
+    if (res.ok) { S.manifest = await res.json(); refresh("usb"); refresh("web"); }
+  } catch {}
+}
+
+async function pollPorts() {
+  if (S.nav !== "provisioning" || S.usb.polling) return;
+  S.usb.polling = true;
+  try {
+    const r = await call("list_ports");
+    S.usb.ports = r.ports;
+    S.usb.hidden = r.hidden ?? [];
+    S.usb.err = "";
+    for (const k of Object.keys(S.usb.ids)) if (!r.ports.some((p) => p.port === k)) delete S.usb.ids[k];
+    for (const p of r.ports) if (!p.node && !S.usb.ids[p.port] && !S.usb.work[p.port]) probePort(p.port);
+  } catch (e) {
+    S.usb.err = e.message;
+  } finally {
+    S.usb.polling = false;
+  }
+  refresh("usb");
+}
+
+async function probePort(port) {
+  S.usb.ids[port] = { probing: true };
+  try {
+    const [id] = await call("scan_devices", { port });
+    S.usb.ids[port] = id ?? { state: "unknown", notes: [] };
+  } catch (e) {
+    S.usb.ids[port] = { state: "unknown", notes: [e.message] };
+  }
+  refresh("usb");
+}
+
+function usbRow(p) {
+  const id = S.usb.ids[p.port];
+  const work = S.usb.work[p.port];
+  const op = can("operator");
+  const data = { port: p.port };
+  const head = (title, sub) => `<div class="grow"><p class="h-md">${title}</p><p class="tiny muted">${esc(p.port)} · ${esc(p.bridge)}${sub ? ` · ${sub}` : ""}</p></div>`;
+  let main, acts = "";
+  if (work) {
+    main = head(esc(portLabel(p)), "");
+    acts = `<span class="spinner small">${esc(work)}</span>`;
+  } else if (p.node) {
+    const n = liveNode(p.node);
+    main = head(`${esc(devName(p.node))} <span class="tiny muted">${esc(boardName(n?.board ?? ""))}</span>`, "on the hub");
+    acts = chip("on the hub", "success") + btn("Open", { act: "go", data: { nav: "device", node: p.node }, color: "primary", variant: "solid" });
+  } else if (!id || id.probing) {
+    main = head(esc(portLabel(p)), "");
+    acts = `<span class="spinner small">Asking the board what it runs</span>`;
+  } else if (id.state === "synapse") {
+    const old = latestFw() && newer(latestFw(), id.synapse.fw);
+    main = head(esc(boardName(id.synapse.board)), `Synapse firmware ${esc(id.synapse.fw)}${old ? `, ${esc(latestFw())} is out` : ""}`);
+    acts = op
+      ? (old ? btn(`Update to ${esc(latestFw())}`, { act: "flashport", data }) : "") + btn("Add to the hub", { act: "addport", data, color: "primary", variant: "solid" })
+      : `<span class="tiny muted">an operator can add it</span>`;
+  } else if (id.state === "busy" || id.state === "denied") {
+    main = head(esc(portLabel(p)), `<span class="warn-text">${esc(id.state === "busy" ? "another program on this server holds the port" : "the hub may not open the port")}</span>`);
+    acts = btn("Check again", { act: "reprobe", data });
+  } else {
+    const what = id.state === "micropython" ? `runs MicroPython ${esc(id.micropython?.version ?? "")}` : "no Synapse firmware answered";
+    main = head(esc(portLabel(p)), what);
+    acts = op && p.family !== "native"
+      ? btn("Check again", { act: "reprobe", data, variant: "light" }) + btn("Install Synapse firmware", { act: "flashport", data, color: "primary", variant: "solid" })
+      : btn("Check again", { act: "reprobe", data, variant: "light" });
+  }
+  const notes = !work && !p.node && id?.notes?.length && id.state !== "synapse" ? `<p class="tiny soft">${esc(id.notes.join(" "))}</p>` : "";
+  return `<div class="py3 stack tight"><div class="row wrap between gap-3">${main}<div class="row wrap">${acts}</div></div>${notes}</div>`;
+}
+
+function openFlash(port) {
+  const id = S.usb.ids[port];
+  const what = id?.state === "synapse" ? `updates the Synapse firmware on ${esc(port)} to ${esc(latestFw() ?? "the hub's build")}` : `replaces whatever runs on the board on ${esc(port)} with Synapse firmware`;
+  modal("Install Synapse firmware",
+    `<p class="small soft">This ${what}. The hub first saves a full copy of the board's flash in its data folder, so it can be put back byte for byte. Then it writes the firmware, checks every byte, and adds the board to the hub.</p>
+    <p class="small soft">It takes a minute or two. Leave the board plugged in until it is on the hub.</p>`,
+    btn("Cancel", { act: "close", variant: "light" }) + btn("Install", { act: "doflash", data: { port }, color: "primary", variant: "solid" }));
+}
+
+async function flashPort(port) {
+  closeModal();
+  S.usb.work[port] = "Saving a copy of the board, then installing (a minute or two)";
+  refresh("usb");
+  try {
+    const r = await call("flash_node", { port });
+    toast(`Installed and checked; ${port} is on the hub as ${r.connected_as}`);
+    delete S.usb.ids[port];
+  } catch (e) {
+    toast(`Install on ${port} failed: ${e.message}`, true);
+    delete S.usb.ids[port];
+  } finally {
+    delete S.usb.work[port];
+    pollPorts();
+  }
+}
+
+async function addPort(port) {
+  S.usb.work[port] = "Adding it to the hub";
+  refresh("usb");
+  try {
+    const [n] = await call("connect_node", { port });
+    toast(`${port} is on the hub as ${n.node}; open it to drive its pins`);
+  } catch (e) {
+    toast(e.message, true);
+    delete S.usb.ids[port];
+  } finally {
+    delete S.usb.work[port];
+    pollPorts();
+  }
+}
+
+S.web = null;
+const tabDoor = () => `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/nodes`;
+const serialMod = () => import("/static/serial.js");
+
+function webSet(patch) {
+  if (!S.web) return;
+  Object.assign(S.web, patch);
+  refresh("web");
+}
+
+async function webPick() {
+  let port;
+  try { port = await navigator.serial.requestPort(); }
+  catch { return; }
+  const m = await serialMod();
+  await webReset();
+  const g = m.guess(port.getInfo());
+  S.web = { port, family: g.family, name: g.name, phase: "detect", msg: "", pct: 0 };
+  refresh("web");
+  await webDetect();
+}
+
+async function webDetect() {
+  const m = await serialMod();
+  webSet({ phase: "detect", msg: "", describe: null });
+  try {
+    const { link, describe } = await m.detect(S.web.port);
+    S.web.link = link;
+    if (describe?.node) {
+      const fam = describe.node.arch === "esp32" ? "esp" : "avr";
+      webSet({ describe, family: fam, phase: latestFw() && newer(latestFw(), describe.node.fw) ? "old" : "ready" });
+      if (S.web.phase === "ready" && fam === "esp") webNet();
+    } else {
+      await link.close();
+      S.web.link = null;
+      webSet({ phase: "needfw" });
+    }
+  } catch (e) {
+    webSet({ phase: "error", msg: /already open|Failed to open/i.test(e.message) ? "Another program on this computer has the port open (a serial monitor, the Arduino IDE, a bridge). Close it and press Check again." : e.message });
+  }
+}
+
+async function webFlash(kind) {
+  const m = await serialMod();
+  const w = S.web;
+  if (w.link) { await w.link.close(); w.link = null; }
+  webSet({ phase: "flashing", msg: "Downloading the firmware from the hub", pct: 0 });
+  try {
+    const progress = (msg, pct) => webSet({ msg, pct });
+    if (kind === "esp") {
+      const img = await m.firmware("esp32dev");
+      await m.flashEsp32(w.port, img, progress);
+    } else {
+      const res = await fetch("/firmware/uno.hex");
+      if (!res.ok) throw new Error(`firmware download failed (HTTP ${res.status})`);
+      await m.flashAvr(w.port, await res.text(), progress);
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+    await webDetect();
+  } catch (e) {
+    webSet({ phase: "error", msg: `Installing failed: ${e.message}` });
+  }
+}
+
+async function webNet() {
+  const m = await serialMod();
+  try { webSet({ net: await m.request(S.web.link, "net", {}) }); } catch {}
+}
+
+async function webJoin(f) {
+  const m = await serialMod();
+  const el = f.elements;
+  const set = { ssid: el.ssid.value, pass: el.pass.value, hub: el.hub.value.trim(), key: S.st.node_key };
+  if (!set.ssid || !set.hub) { $("[data-web-err]", f).textContent = "Give the Wi-Fi name and the hub address."; return; }
+  webSet({ phase: "joining", net: null, since: Date.now() });
+  try {
+    webSet({ net: await m.request(S.web.link, "net", { set }) });
+  } catch (e) {
+    webSet({ phase: "ready", msg: e.message });
+    return;
+  }
+  const tick = async () => {
+    const w = S.web;
+    if (!w || w.phase !== "joining") return;
+    const id = w.describe.node.id;
+    const n = (S.snap.nodes ?? []).find((x) => x.id === id);
+    if (n) { webSet({ phase: "joined", node: n.node }); return; }
+    try { webSet({ net: await m.request(w.link, "net", {}, "user:browser", 3000) }); } catch {}
+    setTimeout(tick, 1500);
+  };
+  tick();
+}
+
+async function webBridge() {
+  const m = await serialMod();
+  const w = S.web;
+  webSet({ phase: "bridged", bridge: "dialling" });
+  w.stop = m.tabBridge(w.link, tabDoor(), S.st.node_key, (s) => webSet({ bridge: s }));
+}
+
+async function webReset() {
+  const w = S.web;
+  S.web = null;
+  if (!w) return;
+  w.stop?.();
+  await w.link?.close().catch(() => {});
+}
+
+function webView() {
+  if (!("serial" in navigator) || !isSecureContext) return `<p class="small soft">This browser cannot reach USB. Open this page in Chrome or Edge on the computer the board is plugged into${isSecureContext ? "" : ", over https"}.</p>`;
+  if (!can("admin")) return '<p class="small muted">An admin sets up boards from their computer, because the board is handed the node key.</p>';
+  const w = S.web;
+  if (!w) return `<p class="small soft">Plug the board into this computer, then choose it. The page reads what it runs, installs Synapse firmware if it needs it, and brings it onto the hub: an ESP32 over its own Wi-Fi, any other board through this tab.</p>
+    <div class="row">${btn("Choose the board", { act: "webpick", color: "primary", variant: "solid", size: "md" })}</div>`;
+  const d = w.describe?.node;
+  const li = (cls, text) => `<li class="${cls}">${text}</li>`;
+  const steps = [li("done", `Found ${esc(w.name)} on this computer's USB`)];
+  let body = "";
+  if (w.phase === "detect") steps.push(li("now", "Asking the board what it runs"));
+  else if (w.phase === "error") { steps.push(li("bad", esc(w.msg))); body = btn("Check again", { act: "webdetect", color: "primary" }); }
+  else if (w.phase === "needfw" || w.phase === "old") {
+    steps.push(li("now", w.phase === "old" ? `It runs Synapse firmware ${esc(d.fw)}; ${esc(latestFw())} is out` : "It does not run Synapse firmware yet"));
+    const esp = btn("Install for ESP32", { act: "webflash", data: { kind: "esp" }, color: "primary", variant: "solid" });
+    const avr = btn("Install for Arduino Uno or Nano", { act: "webflash", data: { kind: "avr" }, color: w.family === "either" ? "primary" : "default", variant: w.family === "either" ? "solid" : "flat" });
+    body = `<p class="small soft">Installing overwrites whatever the board runs now. ${w.family === "either" ? "This USB chip sits on both kinds of board: pick the one in your hand." : ""}</p>
+      <div class="row wrap">${w.family === "avr" ? avr : w.family === "esp" ? esp : esp + avr}${w.phase === "old" ? btn("Keep the old firmware", { act: "webkeep", variant: "light" }) : ""}</div>`;
+  } else if (w.phase === "flashing") {
+    steps.push(li("now", `${esc(w.msg)} ${w.pct ? `${Math.round(w.pct * 100)}%` : ""}`));
+    body = `<div class="meter"><span data-w="${Math.round(w.pct * 100)}"></span></div><p class="tiny muted">Keep the board plugged in and this tab open.</p>`;
+  } else {
+    steps.push(li("done", `Synapse firmware ${esc(d.fw)} on ${esc(boardName(d.board))} (${esc(d.id)})`));
+    if (w.family === "esp") body = espView(w);
+    else body = avrView(w);
+  }
+  return `<ul class="checks">${steps.join("")}</ul>${body}
+    <div class="row">${btn("Start over", { act: "webreset", variant: "light" })}</div>`;
+}
+
+function hubStep(w) {
+  return w.node
+    ? `<li class="done">On the hub as <strong>${esc(devName(w.node))}</strong> ${btn("Open", { act: "go", data: { nav: "device", node: w.node }, color: "primary", variant: "solid" })}</li>`
+    : `<li class="now">Waiting for it to reach the hub</li>`;
+}
+
+function espView(w) {
+  const n = w.net;
+  if (w.phase === "joining" || w.phase === "joined") {
+    const wifi = n?.wifi === "up" ? `<li class="done">Joined Wi-Fi ${esc(n.ssid)} at ${esc(n.ip)} (${esc(n.rssi)} dBm)</li>` : `<li class="now">Joining Wi-Fi</li>`;
+    const link = n?.link === "up" ? `<li class="done">Dialled ${esc(n.hub)}</li>` : n?.wifi === "up" ? `<li class="now">Dialling the hub</li>` : "";
+    const brown = n?.power === "brownout" ? `<p class="small warn-text">The board's supply sagged when its radio started; most computer USB ports cannot feed an ESP32's Wi-Fi. It keeps its settings: plug it into a phone charger or battery bank and it dials in by itself.</p>` : "";
+    const slow = !w.node && w.since && Date.now() - w.since > 45000 && n?.wifi !== "up" ? `<p class="small warn-text">It has not joined Wi-Fi yet. Check the name and password (2.4 GHz networks only), then save again.</p>` : "";
+    const done = w.phase === "joined" ? `<p class="small soft">It holds the Wi-Fi and hub settings in its flash. Unplug it and power it from anything: it dials in by itself and its LED shows the state.</p>` : "";
+    return `<ul class="checks"><li class="done">Stored the Wi-Fi and the hub address</li>${wifi}${link}${w.phase === "joined" ? hubStep(w) : n?.link === "up" ? `<li class="now">Waiting for the hub to list it</li>` : ""}</ul>${brown}${slow}${done}
+      ${w.phase === "joining" ? `<div class="row">${btn("Change the Wi-Fi", { act: "webwifi", variant: "light" })}</div>` : ""}`;
+  }
+  if (w.phase === "bridged") return avrView(w);
+  const have = n?.ssid ? `<p class="tiny muted">It holds Wi-Fi ${esc(n.ssid)} and hub ${esc(n.hub || "none")} now${n.wifi === "off" ? "" : `, Wi-Fi ${esc(n.wifi)}`}.</p>` : "";
+  return `<form data-form="webjoin" class="stack tight">
+      <p class="small soft">Give it the Wi-Fi it will live on. It stores the network, this hub's address and the node key, then dials in by itself on any power supply.</p>
+      <div class="form-grid">
+        ${field("Wi-Fi name", input("ssid", { value: n?.ssid ?? "", extra: 'autocomplete="off"' }))}
+        ${field("Wi-Fi password", input("pass", { type: "password", extra: 'autocomplete="new-password"' }))}
+        ${field("Hub address", input("hub", { value: S.st.nodes_url }), "the node door the board dials")}
+      </div>${have}
+      <p class="err" data-web-err>${esc(w.msg ?? "")}</p>
+      <div class="row wrap">${btn("Save and join", { type: "submit", color: "primary", variant: "solid" })}${btn("Or carry it through this tab", { act: "webbridge", variant: "light" })}</div>
+    </form>`;
+}
+
+function avrView(w) {
+  if (w.phase !== "bridged") return `<p class="small soft">${w.family === "esp" ? "" : "This board has no radio. "}This tab can carry it to the hub while the tab stays open. To keep it on the hub for good, plug it into this server, or into any computer running the bridge below.</p>
+    <div class="row">${btn("Bring it onto the hub through this tab", { act: "webbridge", color: "primary", variant: "solid" })}</div>`;
+  if (!w.node) {
+    const id = w.describe.node.id;
+    const n = (S.snap.nodes ?? []).find((x) => x.id === id);
+    if (n) w.node = n.node;
+  }
+  const state = { dialling: "Dialling the hub", open: "Linked to the hub", lost: "The link dropped; dialling again", stopped: "Stopped" }[w.bridge] ?? w.bridge;
+  return `<ul class="checks"><li class="${w.bridge === "open" ? "done" : "now"}">${esc(state)} through this tab</li>${w.bridge === "open" ? hubStep(w) : ""}</ul>
+    <p class="tiny muted">The board stays on the hub while this tab is open. You can use the rest of the dashboard in it.</p>
+    <div class="row">${btn("Stop", { act: "webreset", color: "danger", variant: "light" })}</div>`;
 }
 
 const BEACON_LEGEND = "one flash, no hub; two, joining Wi-Fi; three, dialling; one long, on the hub; flicker, a lease is active; four, radio held off after a brownout; five, failsafe.";
 
 VIEWS.nodes = {
   title: "Connected Nodes",
-  html: () => {
-    const b = bringIn();
-    return `<div class="stack">
+  html: () => `<div class="stack">
       <div class="row wrap between gap-3">
         <div class="row wrap gap-3"><h2 class="h-2xl">Nodes</h2><div class="row" data-part="hubchips"></div></div>
-        <div class="row wrap">${btn("Refresh", { act: "reload", variant: "light" })}${btn("Scan USB", { act: "scan" })}${btn("Connect", { act: "connect", color: "primary", variant: "solid", disabled: !can("operator") })}</div>
+        <div class="row wrap">${btn("Refresh", { act: "reload", variant: "light" })}${btn("Add a board", { act: "go", data: { nav: "provisioning" }, color: "primary", variant: "solid" })}</div>
       </div>
       <div data-part="list"></div>
-      ${card({ body: `<h3 class="h-lg">Bring in a board from anywhere</h3>
-        <p class="small soft">Run a bridge beside the board, on whatever machine it is plugged into. It dials this hub, presents the node key, and the board appears above named by its board. It reconnects every 2 s if the link drops.</p>
-        <div class="row start"><pre class="code grow">${esc(b.bridge)}</pre>${btn("Copy", { act: "copy", data: { text: b.bridge } })}</div>
-        <p class="small soft">The node key is the hub's SYNAPSE_NODE_KEY${can("admin") ? "" : "; an admin can see it on Provisioning"}. A device that speaks the protocol itself dials the same address and sends the key as its first line.</p>
-        <p class="small soft">An ESP32 running the node firmware dials in by itself once it holds the Wi-Fi and hub settings. Plug it into any machine once and store them; from then on its LED shows the state: ${BEACON_LEGEND}</p>
-        <div class="row start"><pre class="code grow">${esc(b.provision)}</pre>${btn("Copy", { act: "copy", data: { text: b.provision } })}</div>` })}
-    </div>`;
-  },
+      <p class="tiny muted">Each board's LED shows its state: ${BEACON_LEGEND}</p>
+    </div>`,
   parts: {
     hubchips: () => S.snap.hub_ok
       ? chip(`hub ${S.snap.hub_version}`) + chip(can("operator") ? "read-write" : "read-only", can("operator") ? "warning" : "default")
@@ -508,26 +828,12 @@ VIEWS.nodes = {
     list: () => {
       if (!S.snap.hub_ok) return empty(`The hub did not answer. Check that it is running, then press Refresh.${S.snap.hub_error ? `<br><span class="small">${esc(S.snap.hub_error)}</span>` : ""}`);
       const nodes = S.snap.nodes ?? [];
-      if (!nodes.length) return empty("No board is on the hub yet. Bring one in from anywhere with the commands below, or plug one into the hub's own USB.", btn("Scan USB", { act: "scan" }));
+      if (!nodes.length) return empty("No board is on the hub yet. Plug one into this server or your computer and add it.", btn("Add a board", { act: "go", data: { nav: "provisioning" }, color: "primary" }));
       return `<div class="grid cards">${nodes.map(nodeCard).join("")}</div>`;
     },
   },
   deps: { hubchips: ["nodes"], list: ["nodes", "views", "config"] },
 };
-
-async function openScan() {
-  const m = modal("USB ports on this server", spinner("Scanning"), btn("Close", { act: "close", variant: "light" }), true);
-  const body = $(".modal-body", m);
-  try {
-    const rows = await call("scan_devices", { deep: false });
-    if (!$("#modal-root").contains(body)) return;
-    body.innerHTML = rows.length
-      ? `<div class="divide">${rows.map((r) => `<div class="row between gap-3 py3"><div class="grow"><p class="h-md">${esc(r.port)}</p><p class="tiny muted">${esc(r.bridge)}${r.synapse ? `, ${esc(r.synapse.board)}, firmware ${esc(r.synapse.fw)}` : ""}</p></div><div class="row">${chip(r.state)}${r.state === "synapse" && can("operator") ? btn("Connect", { act: "connectport", data: { port: r.port }, color: "success" }) : ""}</div></div>`).join("")}</div>`
-      : '<p class="small muted">Nothing is on the USB ports. In Docker the hub sees only the devices given to its container.</p>';
-  } catch (e) {
-    body.innerHTML = `<p class="err">${esc(e.message)}</p>`;
-  }
-}
 
 function openConnect() {
   S.via = S.via ?? "usb";
@@ -567,7 +873,7 @@ VIEWS.devices = {
         .filter((d) => !q || [d.name, d.node, d.board, d.description, d.id].some((x) => String(x ?? "").toLowerCase().includes(q)))
         .filter((d) => st === "all" || (st === "online") === online(d.node))
         .sort((a, b) => Number(online(b.node)) - Number(online(a.node)) || a.name.localeCompare(b.name));
-      if (!devices().length) return `<div class="empty"><p>No device has reached this hub yet.</p>${btn("Connect device", { act: "go", data: { nav: "provisioning" }, color: "primary" })}</div>`;
+      if (!devices().length) return `<div class="empty"><p>No device has reached this hub yet.</p>${btn("Add a board",{ act: "go", data: { nav: "provisioning" }, color: "primary" })}</div>`;
       if (!list.length) return '<p class="small muted">No device matches.</p>';
       const pages = Math.ceil(list.length / 9);
       S.page = Math.min(S.page, pages);
@@ -593,7 +899,6 @@ VIEWS.devices = {
 
 function openRegister() {
   const opts = devices().map((d) => [d.node, `${d.name} (${d.node}, ${online(d.node) ? "online" : "offline"})`]);
-  const b = bringIn();
   const first = devices()[0];
   modal("Register a device",
     `<p class="small soft">A board registers itself the first time it reaches the hub. Give it a name and say what it is wired to; the name shows everywhere in the dashboard.</p>
@@ -602,13 +907,9 @@ function openRegister() {
       ${field("Name", input("name", { value: first?.name ?? "", placeholder: "Greenhouse controller" }))}
       ${field("Description", `<textarea class="field-input" name="description" placeholder="What is wired to it, where it lives">${esc(first?.description ?? "")}</textarea>`)}
     </form>` : '<p class="small muted">No board has reached the hub yet.</p>'}
-    <div class="stack tight"><p class="h-md">Quick start for a new board</p>
-      <ol class="small soft stack tight steps">
-        <li>Flash the Synapse node firmware once from the harness: <code class="inline">npm run synapse -- flash &lt;port&gt;</code>.</li>
-        <li>An ESP32: store Wi-Fi and the hub address (Provisioning has the command). Any other board: run the bridge beside it.</li>
-        <li>It dials ${esc(b.url)}, appears in the fleet within seconds, and its LED shows one long flash while it is on the hub.</li>
-      </ol>
-      ${btn("Open Provisioning", { act: "go", data: { nav: "provisioning" }, variant: "light" })}
+    <div class="stack tight"><p class="h-md">A new board</p>
+      <p class="small soft">Plug it into this server or into your computer, then open Add a board. It installs the firmware if the board needs it and brings the board onto the hub; its LED shows one long flash while it is on the hub.</p>
+      ${btn("Add a board", { act: "go", data: { nav: "provisioning" }, variant: "light" })}
     </div>`,
     btn("Cancel", { act: "close", variant: "light" }) + (opts.length ? btn("Save", { act: "submitregister", color: "primary", variant: "solid" }) : ""), true);
 }
@@ -728,27 +1029,45 @@ async function loadDescribe(node) {
 }
 
 VIEWS.provisioning = {
-  title: "Provisioning",
+  title: "Add a Board",
   html: () => {
     const b = bringIn();
     const admin = can("admin");
     return `<div class="stack">
-      <div><h2 class="h-2xl">Provisioning</h2><p class="small muted">Boards come to the hub: each one dials the node door and presents the node key. Whoever can reach that address and holds the key can join, so keep the key private.</p></div>
+      <div><h2 class="h-2xl">Add a board</h2><p class="small muted">Plug a board in and it shows up here. Boards on this server's USB are added with one press; a board on your own computer is set up from this page in Chrome or Edge; a board anywhere else dials in through a bridge.</p></div>
+      ${card({ header: `<h3 class="h-lg grow">Plugged into this server</h3>${btn("Check now", { act: "pollports", variant: "light" })}`, body: `<div data-part="usb"></div>` })}
+      ${card({ header: `<h3 class="h-lg">Plugged into this computer</h3>`, body: `<div class="stack" data-part="web"></div>` })}
+      ${card({ header: `<h3 class="h-lg">Plugged into another computer</h3>`, body: `
+        <p class="small soft">On a Linux machine with Docker, run this once. It watches that machine's USB, brings every Synapse board on it to this hub, and redials if the link drops. A board without Synapse firmware is set up first from the card above.</p>
+        ${admin ? `<div class="row start"><pre class="code grow">${esc(b.bridge)}</pre>${btn("Copy", { act: "copy", data: { text: b.bridge } })}</div>` : `<p class="small muted">An admin sees the command, because it holds the node key.</p>`}
+        <p class="tiny muted">Docker on a Mac or Windows cannot reach USB: use the card above in Chrome or Edge there.</p>` })}
       ${card({ header: `<h3 class="h-lg">Node door and key</h3>`, body: `
+        <p class="small soft">Every board reaches the hub here and presents the node key as its first line. Whoever can reach the address and holds the key can join, so keep the key private. Its LED shows the state: ${BEACON_LEGEND}</p>
         <div class="row start"><pre class="code grow">${esc(b.url)}</pre>${btn("Copy", { act: "copy", data: { text: b.url } })}</div>
-        ${admin ? `<div class="row start"><pre class="code grow">${esc(b.key)}</pre>${btn("Copy", { act: "copy", data: { text: b.key } })}</div>` : `<p class="small muted">Only an admin sees the node key.</p>`}` })}
-      ${card({ header: `<h3 class="h-lg">An ESP32 on Wi-Fi</h3>`, body: `
-        <p class="small soft">Plug it in over USB once. It stores the Wi-Fi and the hub address in its flash, then dials in by itself on any power supply: a battery bank, a solar cell, the far side of the world. Its LED shows the state: ${BEACON_LEGEND}</p>
-        <div class="row start"><pre class="code grow">${esc(b.provision)}</pre>${btn("Copy", { act: "copy", data: { text: b.provision } })}</div>` })}
-      ${card({ header: `<h3 class="h-lg">A board on a computer's USB (Uno, Nano, any Synapse board)</h3>`, body: `
-        <p class="small soft">A bridge beside the board carries it to the hub and redials if the link drops.</p>
-        <div class="row start"><pre class="code grow">${esc(b.bridge)}</pre>${btn("Copy", { act: "copy", data: { text: b.bridge } })}</div>
-        <p class="tiny muted">On a Mac, Docker cannot reach USB: run the same command from a checkout of the harness with <code class="inline">npm run synapse -- bridge …</code>. A board with no Synapse firmware yet is flashed with <code class="inline">npm run synapse -- flash &lt;port&gt;</code> from the harness.</p>` })}
-      ${card({ header: `<h3 class="h-lg grow">Boards on the hub's own USB, or listening on the network</h3>`, body: `
-        <p class="small soft">Only when the hub container was given the device, or the board sits behind a listening bridge on a network the hub can reach.</p>
-        <div class="row">${btn("Scan USB", { act: "scan" })}${btn("Connect", { act: "connect", color: "primary", variant: "solid", disabled: !can("operator") })}</div>` })}
+        ${admin ? `<div class="row start"><pre class="code grow">${esc(b.key)}</pre>${btn("Copy", { act: "copy", data: { text: b.key } })}</div>` : `<p class="small muted">Only an admin sees the node key.</p>`}
+        <p class="small soft">A board behind a listening bridge on a network the hub reaches is added by address.</p>
+        <div class="row">${btn("Connect by address", { act: "connect", disabled: !can("operator") })}</div>` })}
     </div>`;
   },
+  mount: () => {
+    loadManifest();
+    pollPorts();
+    clearInterval(S.usbTimer);
+    S.usbTimer = setInterval(() => { if (S.nav === "provisioning") pollPorts(); else clearInterval(S.usbTimer); }, 2000);
+  },
+  parts: {
+    usb: () => {
+      if (!S.snap.hub_ok) return '<p class="small muted">The hub is not answering, so it cannot look at its USB.</p>';
+      if (S.usb.err) return `<p class="err">${esc(S.usb.err)}</p>`;
+      if (!S.usb.ports) return spinner("Looking at this server's USB");
+      const hidden = S.usb.hidden.length ? `<div class="stack tight"><p class="small warn-text">This server has ${esc(S.usb.hidden.join(", "))}, but the hub has no access to USB. Add these lines to the hub service in compose.yaml, set SYNAPSE_SERIAL_GID in .env to the group that owns the port (<code class="inline">stat -c %g ${esc(S.usb.hidden[0])}</code>), and run <code class="inline">docker compose up -d</code>:</p>
+        <div class="row start"><pre class="code grow">${esc(USB_COMPOSE)}</pre>${btn("Copy", { act: "copy", data: { text: USB_COMPOSE } })}</div></div>` : "";
+      if (!S.usb.ports.length) return `${hidden}${hidden ? "" : '<p class="small muted">Nothing is plugged into this server. Plug a board in; it shows up here within two seconds.</p>'}`;
+      return `<div class="divide">${S.usb.ports.map(usbRow).join("")}</div>${hidden}`;
+    },
+    web: webView,
+  },
+  deps: { usb: ["usb", "nodes"], web: ["web", "nodes"] },
 };
 
 const PRESETS = {
@@ -1152,10 +1471,20 @@ const ACT = {
       if (S.nav === "device") go("devices");
     });
   },
-  scan: () => openScan(),
   connect: () => openConnect(),
   via: (el) => { S.via = el.dataset.via; openConnect(); },
-  connectport: (el) => busy(el, async () => { await call("connect_node", { port: el.dataset.port }); closeModal(); toast(`Connected ${el.dataset.port}`); }),
+  pollports: (el) => busy(el, () => pollPorts()),
+  reprobe: (el) => probePort(el.dataset.port),
+  addport: (el) => addPort(el.dataset.port),
+  flashport: (el) => openFlash(el.dataset.port),
+  doflash: (el) => flashPort(el.dataset.port),
+  webpick: () => webPick().catch((e) => toast(e.message, true)),
+  webdetect: () => webDetect(),
+  webflash: (el) => webFlash(el.dataset.kind),
+  webkeep: () => { webSet({ phase: "ready" }); if (S.web.family === "esp") webNet(); },
+  webwifi: () => webSet({ phase: "ready", msg: "" }),
+  webbridge: () => webBridge().catch((e) => toast(e.message, true)),
+  webreset: () => webReset().then(() => refresh("web")),
   submitconnect: () => $("#connect-form")?.requestSubmit(),
   register: () => openRegister(),
   submitregister: () => $("#register-form")?.requestSubmit(),
@@ -1270,6 +1599,7 @@ function applyTemplate(form) {
 
 const FORM = {
   search: (f) => go("devices", { q: f.elements.q.value.trim() }),
+  webjoin: (f) => webJoin(f),
   connect: async (f, e) => {
     const el = f.elements;
     const target = S.via === "usb" ? el.port.value.trim() : `tcp:${el.host.value.trim()}:${el.netport.value.trim()}${el.hb.value.trim() ? `:${el.hb.value.trim()}` : ""}`;

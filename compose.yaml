@@ -2,19 +2,28 @@ name: synapse-control
 
 services:
   hub:
-    image: ghcr.io/synapse-control/hub:${SYNAPSE_HUB_TAG:-0.2}
+    image: ghcr.io/synapse-control/hub:${SYNAPSE_HUB_TAG:-0.3}
     restart: unless-stopped
     environment:
       SYNAPSE_NODES: ${SYNAPSE_NODES:-auto}
+      SYNAPSE_DEV_DIR: /host/dev
+    group_add:
+      - "${SYNAPSE_SERIAL_GID:-dialout}"
+    device_cgroup_rules:
+      - "c 188:* rmw"
+      - "c 166:* rmw"
     volumes:
       - synapse-data:/data
-    # devices:
-    #   - /dev/ttyACM0:/dev/ttyACM0
-    # group_add:
-    #   - "${SERIAL_GID:-984}"
+      - type: bind
+        source: /dev
+        target: /host/dev
+        read_only: true
+        bind:
+          create_host_path: false
+          recursive: disabled
 
   dashboard:
-    image: ghcr.io/synapse-control/dashboard:${SYNAPSE_DASHBOARD_TAG:-0.2}
+    image: ghcr.io/synapse-control/dashboard:${SYNAPSE_DASHBOARD_TAG:-0.3}
     restart: unless-stopped
     depends_on:
       hub:
@@ -24,6 +33,7 @@ services:
     environment:
       SYNAPSE_HUB_URL: http://hub:4010
       SYNAPSE_PUBLIC_URL: ${SYNAPSE_PUBLIC_URL:-}
+      SYNAPSE_NODES_URL: ${SYNAPSE_NODES_URL:-}
       DASHBOARD_LOCAL_LOGIN: ${DASHBOARD_LOCAL_LOGIN:-true}
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}

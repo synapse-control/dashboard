@@ -73,7 +73,7 @@ func newApp(ctx context.Context, cfg config) (*app, error) {
 	}
 	a := &app{
 		cfg:          cfg,
-		hub:          &hubClient{base: cfg.hubURL, tokenDir: cfg.tokenDir, http: &http.Client{Timeout: 60 * time.Second}},
+		hub:          &hubClient{base: cfg.hubURL, tokenDir: cfg.tokenDir, http: &http.Client{Timeout: 10 * time.Minute}},
 		live:         newBroadcaster(),
 		feed:         newFeed(),
 		eng:          newEngine(),
@@ -111,6 +111,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("GET /health", a.health)
 	mux.Handle("/nodes", a.proxy)
 	mux.Handle("/mcp/", a.proxy)
+	mux.HandleFunc("GET /firmware/{file}", a.signedIn(func(w http.ResponseWriter, r *http.Request, _ session) { a.proxy.ServeHTTP(w, r) }))
 	mux.HandleFunc("GET /setup", a.setupPage)
 	mux.HandleFunc("POST /setup", a.setupSubmit)
 	mux.HandleFunc("GET /login", a.loginPage)
@@ -293,6 +294,9 @@ func (a *app) dashboardPage(w http.ResponseWriter, r *http.Request, s session) {
 }
 
 func (a *app) nodesURL(r *http.Request) string {
+	if a.cfg.nodesURL != "" {
+		return a.cfg.nodesURL
+	}
 	base := a.cfg.publicURL
 	if base == "" {
 		scheme := "http"

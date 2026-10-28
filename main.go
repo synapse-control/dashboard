@@ -20,6 +20,7 @@ type config struct {
 	tokenDir     string
 	dataDir      string
 	publicURL    string
+	nodesURL     string
 	localLogin   bool
 	oidcIssuer   string
 	oidcID       string
@@ -44,6 +45,7 @@ func loadConfig() config {
 		tokenDir:     env("SYNAPSE_TOKEN_DIR", "/data/tokens"),
 		dataDir:      env("DASHBOARD_DATA", "/data/dashboard"),
 		publicURL:    strings.TrimRight(env("SYNAPSE_PUBLIC_URL", ""), "/"),
+		nodesURL:     env("SYNAPSE_NODES_URL", ""),
 		localLogin:   env("DASHBOARD_LOCAL_LOGIN", "true") != "false",
 		oidcIssuer:   env("OIDC_ISSUER", ""),
 		oidcID:       env("OIDC_CLIENT_ID", ""),
