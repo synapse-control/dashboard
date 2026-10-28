@@ -459,7 +459,7 @@ function nodeCard(n) {
     body += `<div class="stack tight"><div class="row between"><span class="small h-md">Pins</span>${btn("Back", { act: "closeview", data: { node: n.node }, variant: "light" })}</div>
       <ul class="stack tight">${view.described.pins.map((p) => `<li class="row wrap small"><span class="w4">${esc(p.id)}</span>${p.label ? `<span class="muted">${esc(p.label)}</span>` : ""}${p.caps.map((c) => chip(c, "default", "bordered")).join("")}</li>`).join("")}</ul></div>`;
   } else {
-    body += `<div class="stack tight"><p class="tiny muted">${esc(where(n.port ?? n.spec))}</p><p class="tiny muted">IO ${esc(n.vio)} V${n.simulated ? " · simulated" : ""}</p></div>`;
+    body += `<div class="stack tight"><p class="tiny muted">${esc(where(n.port ?? n.spec))}</p><p class="tiny muted">IO ${esc(n.vio)} V${n.simulated ? " · simulated" : ""}</p>${hostedLine(n) ? `<p class="tiny muted">${esc(hostedLine(n))}</p>` : ""}</div>`;
   }
   const footer = view || spin ? "" :
     btn("Survey", { act: "survey", data: { node: n.node }, color: "primary", cls: "grow" }) +
@@ -504,12 +504,26 @@ const newer = (a, b) => {
   for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
   return false;
 };
-const boardName = (b) => ({ "esp32-devkit": "ESP32 DevKit", "arduino-uno": "Arduino Uno" })[b] ?? b;
+const boardName = (b) => ({ "esp32-devkit": "ESP32 DevKit", "arduino-uno": "Arduino Uno", "arduino-mega": "Arduino Mega", "rp2040-pico": "Raspberry Pi Pico", "esp32-s3": "ESP32-S3", "esp32-c3": "ESP32-C3", atmega328p: "ATmega328P board" })[b] ?? b;
+const runs = (id) => (id.state === "firmata" ? `Firmata ${id.firmata?.version ?? ""} ${id.firmata?.name ?? ""}` : `MicroPython ${id.micropython?.version ?? ""} (${id.micropython?.machine ?? ""})`).trim();
+const chipOf = (id) => (id?.chip ? ` · chip ${esc(id.chip.detail?.chip || id.chip.name)}` : "");
+const HOSTED_NOTE = {
+  firmata: "Add as it is leaves the board untouched: the hub speaks Firmata for it. Its failsafe and timing then live on the hub, so if the hub stops, outputs hold until the board resets.",
+  micropython: "Add as it is leaves the board untouched: the hub speaks MicroPython for it, and a timer on the board keeps the failsafe. Disconnecting soft-resets it so its own program runs again.",
+};
+const hostedLine = (n) => (n?.driver && n.driver !== "synapse" ? `runs ${n.fw}; the hub speaks for it · failsafe on the ${n.failsafe} · timing on the ${n.timing}` : "");
 const latestFw = () => S.manifest?.fw;
 const portLabel = (p) => (p.candidates ?? []).filter((c) => c !== "unknown" && c !== "other").join(" or ") || "a USB serial board";
 
 S.usb = { ports: null, hidden: [], ids: {}, work: {}, err: "" };
 S.manifest = null;
+S.backups = null;
+
+async function loadBackups() {
+  try { S.backups = await call("list_backups"); }
+  catch (e) { S.backups = { error: e.message }; }
+  refresh("backups");
+}
 
 async function loadManifest() {
   if (S.manifest) return;
@@ -537,10 +551,11 @@ async function pollPorts() {
   refresh("usb");
 }
 
-async function probePort(port) {
-  S.usb.ids[port] = { probing: true };
+async function probePort(port, deep = false) {
+  S.usb.ids[port] = { probing: true, deep };
+  refresh("usb");
   try {
-    const [id] = await call("scan_devices", { port });
+    const [id] = await call("scan_devices", deep ? { port, deep: true } : { port });
     S.usb.ids[port] = id ?? { state: "unknown", notes: [] };
   } catch (e) {
     S.usb.ids[port] = { state: "unknown", notes: [e.message] };
@@ -564,7 +579,14 @@ function usbRow(p) {
     acts = chip("on the hub", "success") + btn("Open", { act: "go", data: { nav: "device", node: p.node }, color: "primary", variant: "solid" });
   } else if (!id || id.probing) {
     main = head(esc(portLabel(p)), "");
-    acts = `<span class="spinner small">Asking the board what it runs</span>`;
+    acts = `<span class="spinner small">${id?.deep ? "Asking the chip itself (the board resets)" : "Asking the board what it runs"}</span>`;
+  } else if (id.state === "firmata" || id.state === "micropython") {
+    main = head(esc(portLabel(p)), `runs ${esc(runs(id))}${chipOf(id)}`);
+    acts = op
+      ? btn("Ask the chip", { act: "chipport", data, variant: "light", title: "reset the board into its bootloader and read the chip; writes nothing" }) +
+        btn("Install Synapse firmware", { act: "flashport", data, variant: "light" }) +
+        btn("Add as it is", { act: "addport", data: { port: p.port, as: id.state }, color: "primary", variant: "solid" })
+      : `<span class="tiny muted">an operator can add it</span>`;
   } else if (id.state === "synapse") {
     const old = latestFw() && newer(latestFw(), id.synapse.fw);
     main = head(esc(boardName(id.synapse.board)), `Synapse firmware ${esc(id.synapse.fw)}${old ? `, ${esc(latestFw())} is out` : ""}`);
@@ -575,21 +597,23 @@ function usbRow(p) {
     main = head(esc(portLabel(p)), `<span class="warn-text">${esc(id.state === "busy" ? "another program on this server holds the port" : "the hub may not open the port")}</span>`);
     acts = btn("Check again", { act: "reprobe", data });
   } else {
-    const what = id.state === "micropython" ? `runs MicroPython ${esc(id.micropython?.version ?? "")}` : "no Synapse firmware answered";
-    main = head(esc(portLabel(p)), what);
+    main = head(esc(portLabel(p)), `no Synapse firmware, Firmata or MicroPython answered${chipOf(id)}`);
     acts = op && p.family !== "native"
-      ? btn("Check again", { act: "reprobe", data, variant: "light" }) + btn("Install Synapse firmware", { act: "flashport", data, color: "primary", variant: "solid" })
+      ? btn("Check again", { act: "reprobe", data, variant: "light" }) + btn("Ask the chip", { act: "chipport", data, variant: "light", title: "reset the board into its bootloader and read the chip; writes nothing" }) + btn("Install Synapse firmware", { act: "flashport", data, color: "primary", variant: "solid" })
       : btn("Check again", { act: "reprobe", data, variant: "light" });
   }
-  const notes = !work && !p.node && id?.notes?.length && id.state !== "synapse" ? `<p class="tiny soft">${esc(id.notes.join(" "))}</p>` : "";
+  const said = [...(id?.notes ?? []), ...(HOSTED_NOTE[id?.state] ? [HOSTED_NOTE[id.state]] : [])];
+  const notes = !work && !p.node && !id?.probing && said.length && id.state !== "synapse" ? `<p class="tiny soft">${esc(said.join(" "))}</p>` : "";
   return `<div class="py3 stack tight"><div class="row wrap between gap-3">${main}<div class="row wrap">${acts}</div></div>${notes}</div>`;
 }
 
 function openFlash(port) {
   const id = S.usb.ids[port];
-  const what = id?.state === "synapse" ? `updates the Synapse firmware on ${esc(port)} to ${esc(latestFw() ?? "the hub's build")}` : `replaces whatever runs on the board on ${esc(port)} with Synapse firmware`;
+  const what = id?.state === "synapse" ? `updates the Synapse firmware on ${esc(port)} to ${esc(latestFw() ?? "the hub's build")}`
+    : id?.state === "firmata" || id?.state === "micropython" ? `replaces ${esc(runs(id))} on ${esc(port)} with Synapse firmware, which keeps its own failsafe and microsecond timing on the board`
+    : `replaces whatever runs on the board on ${esc(port)} with Synapse firmware`;
   modal("Install Synapse firmware",
-    `<p class="small soft">This ${what}. The hub first saves a full copy of the board's flash in its data folder, so it can be put back byte for byte. Then it writes the firmware, checks every byte, and adds the board to the hub.</p>
+    `<p class="small soft">This ${what}. The hub first saves a full copy of the board's flash in its data folder; Saved copies of boards, on this page, puts it back byte for byte. Then it writes the firmware, checks every byte, and adds the board to the hub.</p>
     <p class="small soft">It takes a minute or two. Leave the board plugged in until it is on the hub.</p>`,
     btn("Cancel", { act: "close", variant: "light" }) + btn("Install", { act: "doflash", data: { port }, color: "primary", variant: "solid" }));
 }
@@ -608,14 +632,41 @@ async function flashPort(port) {
   } finally {
     delete S.usb.work[port];
     pollPorts();
+    loadBackups();
   }
 }
 
-async function addPort(port) {
-  S.usb.work[port] = "Adding it to the hub";
+function openRestore(file) {
+  const b = (S.backups ?? []).find?.((x) => x.file === file);
+  const ports = (S.usb.ports ?? []).map((p) => [p.port, `${p.port} · ${portLabel(p)}${p.node ? ` (on the hub as ${p.node})` : ""}`]);
+  if (!ports.length) { toast("Plug the board into this server first", true); return; }
+  modal("Put a saved copy back",
+    `<p class="small soft">This writes ${esc(file)} (${esc(b?.ran ?? "")}, from ${esc(b?.device ?? "")}) back onto a board, byte for byte, and checks it. Whatever the board runs now is replaced, Synapse firmware included. The hub refuses if the board's chip is not a ${esc(b?.chip ?? "")}.</p>
+    <form data-form="restore">${field("Board", select("port", ports, ports[0][0]))}<input type="hidden" name="file" value="${esc(file)}"></form>`,
+    btn("Cancel", { act: "close", variant: "light" }) + btn("Put it back", { act: "dorestore", color: "danger", variant: "solid" }));
+}
+
+async function restorePort(port, file) {
+  closeModal();
+  S.usb.work[port] = "Putting the saved copy back (a minute for an ESP32)";
   refresh("usb");
   try {
-    const [n] = await call("connect_node", { port });
+    const r = await call("restore_node", { port, file });
+    toast(`${port} is back to ${r.now_runs === "synapse" ? `Synapse firmware ${r.synapse?.fw ?? ""}` : r.now_runs === "firmata" ? `Firmata ${r.firmata?.version ?? ""}` : r.now_runs === "micropython" ? `MicroPython ${r.micropython?.version ?? ""}` : r.now_runs}; checked byte for byte`);
+  } catch (e) {
+    toast(`Putting ${file} back failed: ${e.message}`, true);
+  } finally {
+    delete S.usb.work[port];
+    delete S.usb.ids[port];
+    pollPorts();
+  }
+}
+
+async function addPort(port, as) {
+  S.usb.work[port] = as ? `Taking over its ${as === "firmata" ? "Firmata" : "MicroPython"}` : "Adding it to the hub";
+  refresh("usb");
+  try {
+    const [n] = await call("connect_node", { port: as ? `${as}:${port}` : port });
     toast(`${port} is on the hub as ${n.node}; open it to drive its pins`);
   } catch (e) {
     toast(e.message, true);
@@ -981,6 +1032,7 @@ VIEWS.device = {
             <div class="row wrap"><h2 class="h-2xl">${esc(d?.name ?? node)}</h2>${chip(on ? "online" : "offline", on ? "success" : "danger")}${chip(n ? TRANSPORT[n.transport] ?? n.transport : d.board)}<span class="beacon" data-beacon="${esc(node)}" hidden><span class="led"></span><span class="label"></span></span></div>
             <p class="small soft">${esc(d?.description || "No description yet.")}</p>
             <p class="tiny muted">${esc(node)} · ${esc(n?.board ?? d?.board)} · ${esc(n?.arch ?? d?.arch ?? "")}${n ? ` · IO ${esc(n.vio)} V` : ""} · ${esc(where(n?.port ?? d?.where))} · ${on ? "on the hub now" : `last seen ${esc(ago(d?.last_seen))}`}${d ? ` · first seen ${esc(fmtWhen(d.first_seen))}` : ""}</p>
+            ${hostedLine(n) ? `<p class="tiny muted">${esc(hostedLine(n))}</p>` : ""}
           <div class="row wrap">
             ${on && op ? btn("Identify", { act: "identify", data, color: "primary", title: "blink the onboard LED" }) : ""}
             ${on ? btn("Read inputs", { act: "readall", data }) : ""}
@@ -1002,7 +1054,8 @@ VIEWS.device = {
       return card({
         header: `<div class="grow"><h3 class="h-lg">Pins</h3><p class="tiny muted">${esc(d.node.board)} firmware ${esc(d.node.fw ?? "")} · reserved ${esc(d.reserved.join(", ") || "none")} · ${esc(d.buses.map((b) => `${b.id} (${Object.entries(b.pins).map(([k, v]) => `${k} ${v}`).join(", ")})`).join(" "))}</p></div>`,
         body: `<div class="table-wrap"><table><thead><tr><th>Pin</th><th>Can</th><th>Mode</th><th>Value</th><th>Do</th></tr></thead><tbody>${pinRows(node, d)}</tbody></table></div>
-          <p class="tiny muted">Driving a pin leases it to you for a minute; the board's failsafe sends every output to hi-Z if the hub link drops. Check what a pin is wired to before driving it.</p>`,
+          <p class="tiny muted">Driving a pin leases it to you for a minute; ${d.node.failsafe === "hub" ? "the hub sends every output to hi-Z if the link to it drops, but if the hub itself stops, outputs hold until the board resets" : "the board's failsafe sends every output to hi-Z if the hub link drops"}. Check what a pin is wired to before driving it.</p>
+          ${d.node.notes?.length ? `<details><summary class="tiny">What the hub does for this board</summary><ul class="tiny soft">${d.node.notes.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}`,
       });
     },
     survey: () => {
@@ -1036,9 +1089,10 @@ VIEWS.provisioning = {
     return `<div class="stack">
       <div><h2 class="h-2xl">Add a board</h2><p class="small muted">Plug a board in and it shows up here. Boards on this server's USB are added with one press; a board on your own computer is set up from this page in Chrome or Edge; a board anywhere else dials in through a bridge.</p></div>
       ${card({ header: `<h3 class="h-lg grow">Plugged into this server</h3>${btn("Check now", { act: "pollports", variant: "light" })}`, body: `<div data-part="usb"></div>` })}
+      ${card({ header: `<h3 class="h-lg grow">Saved copies of boards</h3>${btn("Check now", { act: "loadbackups", variant: "light" })}`, body: `<div data-part="backups"></div>` })}
       ${card({ header: `<h3 class="h-lg">Plugged into this computer</h3>`, body: `<div class="stack" data-part="web"></div>` })}
       ${card({ header: `<h3 class="h-lg">Plugged into another computer</h3>`, body: `
-        <p class="small soft">On a Linux machine with Docker, run this once. It watches that machine's USB, brings every Synapse board on it to this hub, and redials if the link drops. A board without Synapse firmware is set up first from the card above.</p>
+        <p class="small soft">On a Linux machine with Docker, run this once. It watches that machine's USB, brings every board on it that runs Synapse firmware, Firmata or MicroPython to this hub, and redials if the link drops. A board running anything else is set up first from the card above.</p>
         ${admin ? `<div class="row start"><pre class="code grow">${esc(b.bridge)}</pre>${btn("Copy", { act: "copy", data: { text: b.bridge } })}</div>` : `<p class="small muted">An admin sees the command, because it holds the node key.</p>`}
         <p class="tiny muted">Docker on a Mac or Windows cannot reach USB: use the card above in Chrome or Edge there.</p>` })}
       ${card({ header: `<h3 class="h-lg">Node door and key</h3>`, body: `
@@ -1051,6 +1105,7 @@ VIEWS.provisioning = {
   },
   mount: () => {
     loadManifest();
+    loadBackups();
     pollPorts();
     clearInterval(S.usbTimer);
     S.usbTimer = setInterval(() => { if (S.nav === "provisioning") pollPorts(); else clearInterval(S.usbTimer); }, 2000);
@@ -1065,9 +1120,16 @@ VIEWS.provisioning = {
       if (!S.usb.ports.length) return `${hidden}${hidden ? "" : '<p class="small muted">Nothing is plugged into this server. Plug a board in; it shows up here within two seconds.</p>'}`;
       return `<div class="divide">${S.usb.ports.map(usbRow).join("")}</div>${hidden}`;
     },
+    backups: () => {
+      if (!S.backups) return spinner("Reading the hub's saved copies");
+      if (S.backups.error) return `<p class="err">${esc(S.backups.error)}</p>`;
+      if (!S.backups.length) return '<p class="small muted">No copies yet. The hub saves one before it installs Synapse firmware on a board, so whatever ran there can be put back.</p>';
+      const op = can("operator");
+      return `<div class="divide">${S.backups.map((b) => `<div class="py3 row wrap between gap-3"><div class="grow"><p class="h-md">${esc(b.ran)}</p><p class="tiny muted">${esc(b.chip)} · from ${esc(b.device)} · ${esc(fmtWhen(b.taken))} · ${esc(Math.round(b.bytes / 1024))} KB · ${esc(b.file)}</p></div>${op ? btn("Put back", { act: "restorepick", data: { file: b.file } }) : ""}</div>`).join("")}</div>`;
+    },
     web: webView,
   },
-  deps: { usb: ["usb", "nodes"], web: ["web", "nodes"] },
+  deps: { usb: ["usb", "nodes"], backups: ["backups"], web: ["web", "nodes"] },
 };
 
 const PRESETS = {
@@ -1475,7 +1537,11 @@ const ACT = {
   via: (el) => { S.via = el.dataset.via; openConnect(); },
   pollports: (el) => busy(el, () => pollPorts()),
   reprobe: (el) => probePort(el.dataset.port),
-  addport: (el) => addPort(el.dataset.port),
+  chipport: (el) => probePort(el.dataset.port, true),
+  loadbackups: () => loadBackups(),
+  restorepick: (el) => openRestore(el.dataset.file),
+  dorestore: () => { const f = $('[data-form="restore"]'); if (f) restorePort(f.elements.port.value, f.elements.file.value); },
+  addport: (el) => addPort(el.dataset.port, el.dataset.as),
   flashport: (el) => openFlash(el.dataset.port),
   doflash: (el) => flashPort(el.dataset.port),
   webpick: () => webPick().catch((e) => toast(e.message, true)),
@@ -1600,6 +1666,7 @@ function applyTemplate(form) {
 const FORM = {
   search: (f) => go("devices", { q: f.elements.q.value.trim() }),
   webjoin: (f) => webJoin(f),
+  restore: (f) => restorePort(f.elements.port.value, f.elements.file.value),
   connect: async (f, e) => {
     const el = f.elements;
     const target = S.via === "usb" ? el.port.value.trim() : `tcp:${el.host.value.trim()}:${el.netport.value.trim()}${el.hb.value.trim() ? `:${el.hb.value.trim()}` : ""}`;

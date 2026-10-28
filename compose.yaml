@@ -2,7 +2,7 @@ name: synapse-control
 
 services:
   hub:
-    image: ghcr.io/synapse-control/hub:${SYNAPSE_HUB_TAG:-0.3}
+    image: ghcr.io/synapse-control/hub:${SYNAPSE_HUB_TAG:-0.4}
     restart: unless-stopped
     environment:
       SYNAPSE_NODES: ${SYNAPSE_NODES:-auto}
@@ -23,7 +23,7 @@ services:
           recursive: disabled
 
   dashboard:
-    image: ghcr.io/synapse-control/dashboard:${SYNAPSE_DASHBOARD_TAG:-0.3}
+    image: ghcr.io/synapse-control/dashboard:${SYNAPSE_DASHBOARD_TAG:-0.4}
     restart: unless-stopped
     depends_on:
       hub:

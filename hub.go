@@ -101,6 +101,10 @@ type node struct {
 	Simulated bool     `json:"simulated"`
 	Port      string   `json:"port,omitempty"`
 	Spec      string   `json:"spec"`
+	Fw        string   `json:"fw,omitempty"`
+	Driver    string   `json:"driver,omitempty"`
+	Failsafe  string   `json:"failsafe,omitempty"`
+	Timing    string   `json:"timing,omitempty"`
 	Beacon    *int     `json:"beacon,omitempty"`
 	Wire      []string `json:"wire"`
 }
