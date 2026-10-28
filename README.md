@@ -23,7 +23,7 @@ board in and open **Add a Board**.
 | Overview | device counts, the latest readings of a channel, recent activity, the health of the hub, the stream and the node door | the hub's node list every second, the dashboard's own recordings |
 | Connected Nodes | every board on the hub with its status LED (beacon) and protocol traffic live; survey a board to say what is wired to it; its pins; disconnect | hub tools `list_nodes`, `wire_log`, `identify_circuit`, `describe_node`, `disconnect_node` |
 | Device Fleet | every board that has ever reached this hub, with your name and description, online or last seen, searchable; forget a board | the dashboard's registry, filled from the hub as boards arrive |
-| A device | read any pin (volts with its uncertainty, or logic), drive it high or low, run PWM, set its mode, release your pins, blink its LED to find it, record a pin as a channel | hub tools `read`, `write`, `set_mode`, `release`, `run_sequence` |
+| A device | read any pin (volts with its uncertainty, or logic), count a pin's frequency and duty, read a touch pad, drive it high or low, run PWM at the frequency you set, set a DAC to a voltage or a sine, set its mode, release your pins, blink its LED to find it, record a pin as a channel; the chip's own instruments (supply, die temperature, Hall sensor), once or live every second, each one recordable; a scope on any analog pin: pick the span, trigger on a rising or falling edge at a level or run free, Single or Run, with frequency, Vpp, mean, RMS, duty and rise and fall times measured from the trace | hub tools `read`, `write`, `capture`, `set_mode`, `release`, `run_sequence` |
 | Add a Board | boards on this server's USB as they are plugged in, with what each runs: add it (as it is, for Firmata or MicroPython), ask its chip, or install or update its firmware (backed up first); the saved copies, each one put back on a board with one press; a board on your own computer's USB, set up from the page in Chrome or Edge (firmware, then Wi-Fi for an ESP32, or carried through the tab); the bridge command for another Linux machine; the node door and key (admins only); connect by address | hub tools `list_ports`, `scan_devices`, `connect_node`, `flash_node`, `list_backups`, `restore_node`, the hub's `/firmware` files, Web Serial in the browser |
 | Live Telemetry | channels: a pin read at the interval you set, scaled into a unit (sensor presets for a TMP36, an LM35, percent of supply), live value, uncertainty and sparkline | the dashboard's sampler calling `read` |
 | Historical Data | a channel over 15 minutes to 30 days, with min to max bands, rule thresholds and a CSV download | the recordings, one file a day |
@@ -68,7 +68,7 @@ the retention you set (30 days by default). Removing or replacing the containers
 | `SYNAPSE_PORT` | `8080` | the port on this machine |
 | `SYNAPSE_PUBLIC_URL` | empty | the address people and boards use, such as `https://synapse.example.com`; with `https` the session cookie is marked secure; needed for OIDC |
 | `SYNAPSE_NODES_URL` | `<SYNAPSE_PUBLIC_URL>/nodes` as `ws://` or `wss://` | the node door boards are told to dial, when it lives at another address (a public door for boards away from home) |
-| `SYNAPSE_HUB_TAG`, `SYNAPSE_DASHBOARD_TAG` | `0.4`, `0.4` | which release line to run |
+| `SYNAPSE_HUB_TAG`, `SYNAPSE_DASHBOARD_TAG` | `0.5`, `0.5` | which release line to run |
 | `SYNAPSE_NODES` | `auto` | boards on the hub's own USB to connect at start; empty connects none, and Add a Board adds them |
 | `SYNAPSE_SERIAL_GID` | `dialout` | the group that owns the USB serial ports on this machine (`stat -c %g /dev/ttyUSB0`); `dialout` fits Debian, Ubuntu and Raspberry Pi OS, Arch and Fedora use the number of `uucp` or `dialout` |
 | `DASHBOARD_LOCAL_LOGIN` | `true` | `false` turns off name-and-password sign-in, leaving OIDC only |
@@ -79,7 +79,7 @@ the retention you set (30 days by default). Removing or replacing the containers
 ## People
 
 There are three roles. A viewer sees every board, reading and alert live, reads pins, runs surveys
-and simulates rules, none of which drive an output. An operator also drives pins, connects and
+and simulates rules, none of which drive an output. An operator also drives pins, runs the scope, connects and
 disconnects boards, records channels, writes rules and names devices. An admin also manages people,
 webhooks and data retention, sees the node key and forgets devices. With OIDC, members of
 `OIDC_ADMIN_GROUP` are admins and everyone else is a viewer. The dashboard holds the hub's tokens
@@ -119,12 +119,12 @@ the wrong key, stays silent for 6 seconds, or sends a line over 256 KiB.
 ## Updates
 
 Each release is a version tag that publishes signed images for amd64 and arm64. The compose file
-follows a release line (`0.4` takes every `0.4.x` fix), so `docker compose pull && docker compose up -d`
+follows a release line (`0.5` takes every `0.5.x` fix), so `docker compose pull && docker compose up -d`
 picks up security patches with no other change. To pin an exact version, set the tag in `.env`.
 Check that an image came from this repository with:
 
 ```sh
-cosign verify ghcr.io/synapse-control/dashboard:0.4 \
+cosign verify ghcr.io/synapse-control/dashboard:0.5 \
   --certificate-identity-regexp '^https://github.com/synapse-control/dashboard/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

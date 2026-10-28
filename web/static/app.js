@@ -20,6 +20,8 @@ const S = {
   views: {},
   busy: {},
   values: {},
+  scope: {},
+  instLive: {},
   readings: {},
   chanErr: {},
   page: 1,
@@ -120,6 +122,12 @@ function modal(title, body, footer, wide = false) {
 const closeModal = () => { $("#modal-root").innerHTML = ""; };
 
 const fmtNum = (v) => (v === null || v === undefined || Number.isNaN(v) ? "–" : String(Math.abs(v) >= 100 ? +v.toFixed(1) : +v.toFixed(3)));
+const UNIT = { C: "°C", count: "" };
+const unitText = (u) => UNIT[u] ?? u ?? "V";
+const qty = (v, u) => (u === "Hz"
+  ? (Math.abs(v) >= 1e6 ? `${fmtNum(v / 1e6)} MHz` : Math.abs(v) >= 1e3 ? `${fmtNum(v / 1e3)} kHz` : `${fmtNum(v)} Hz`)
+  : `${fmtNum(v)}${unitText(u) ? ` ${unitText(u)}` : ""}`);
+const fmtUs = (us) => (us >= 1000 ? `${fmtNum(us / 1000)} ms` : `${fmtNum(us)} µs`);
 const fmtTime = (t) => new Date(t).toLocaleTimeString();
 const fmtWhen = (t) => new Date(t).toLocaleString();
 function ago(t) {
@@ -969,8 +977,10 @@ function valueText(v) {
   if (!v) return "–";
   if (v.error) return `<span class="bad-text">${esc(v.error)}</span>`;
   if (v.driven !== undefined) return `driven ${v.driven ? "HIGH" : "LOW"} <span class="tiny muted">press Read to measure</span>`;
+  if (v.out) return `${esc(v.out)} <span class="tiny muted">the hardware's own figures</span>`;
   if (v.unit === "logic") return v.v ? "HIGH (1)" : "LOW (0)";
-  return `${esc(fmtNum(v.v))} V <span class="tiny muted">±${esc(fmtNum(v.err))}</span>${(v.flags ?? []).filter((f) => f !== "uncalibrated").map((f) => " " + chip(words(f), "warning")).join("")}`;
+  const duty = v.duty !== undefined && v.duty_err < 0.5 ? ` · duty ${esc(fmtNum(v.duty * 100))} %` : "";
+  return `${esc(qty(v.v, v.unit))}${duty} <span class="tiny muted">±${esc(v.unit === "Hz" ? qty(v.err, "Hz") : fmtNum(v.err))}</span>${(v.flags ?? []).filter((f) => f !== "uncalibrated").map((f) => " " + chip(words(f), "warning")).join("")}`;
 }
 
 function pinRows(node, d) {
@@ -982,8 +992,11 @@ function pinRows(node, d) {
     const acts = [
       has("ain") ? btn("Read V", { act: "readpin", data: { node, pin: p.id, as: "a" } }) : "",
       has("din") ? btn("Read", { act: "readpin", data: { node, pin: p.id, as: "d" } }) : "",
+      has("count") ? btn("Freq", { act: "readpin", data: { node, pin: p.id, as: "f" }, title: `count edges for 100 ms${p.count ? `, up to ${qty(p.count.max_hz, "Hz")}` : ""}` }) : "",
+      has("touch") ? btn("Touch", { act: "readpin", data: { node, pin: p.id, as: "t" }, title: "capacitive touch count; it drops when a finger nears the pad" }) : "",
       op && has("dout") ? btn("High", { act: "drive", data: { node, pin: p.id, value: 1 }, color: "primary" }) + btn("Low", { act: "drive", data: { node, pin: p.id, value: 0 } }) : "",
-      op && has("pwm") ? `<label class="field sm duty" title="PWM duty, percent"><input class="field-input" type="number" min="0" max="100" step="1" value="50" data-duty="${esc(key)}"></label>${btn("PWM %", { act: "pwm", data: { node, pin: p.id } })}` : "",
+      op && has("pwm") ? `${p.pwm && !p.pwm.hz ? `<label class="field sm duty" title="PWM frequency, Hz, up to ${esc(qty(p.pwm.max_hz, "Hz"))}"><input class="field-input" type="number" min="1" max="${p.pwm.max_hz}" step="1" value="1000" data-hz="${esc(key)}"></label>` : ""}<label class="field sm duty" title="PWM duty, percent"><input class="field-input" type="number" min="0" max="100" step="1" value="50" data-duty="${esc(key)}"></label>${btn("PWM %", { act: "pwm", data: { node, pin: p.id, hz: p.pwm?.hz ?? 490 } })}` : "",
+      op && has("aout") ? `<label class="field sm duty" title="DAC output, volts"><input class="field-input" type="number" min="0" max="${p.aout?.range_v[1] ?? d.node.vio}" step="0.01" value="${+(d.node.vio / 2).toFixed(2)}" data-aout="${esc(key)}"></label>${btn("DAC V", { act: "aout", data: { node, pin: p.id } })}<label class="field sm duty" title="sine frequency, Hz${p.aout?.sine_hz ? `, ${p.aout.sine_hz[0]} to ${p.aout.sine_hz[1]}` : ""}"><input class="field-input" type="number" min="${p.aout?.sine_hz?.[0] ?? 1}" max="${p.aout?.sine_hz?.[1] ?? 100000}" step="1" value="1000" data-sine="${esc(key)}"></label>${btn("Sine Hz", { act: "sine", data: { node, pin: p.id } })}` : "",
       op ? btn("Record", { act: "record", data: { node, pin: p.id, as: has("ain") ? "a" : "d" }, variant: "light", color: "primary" }) : "",
     ].join("");
     return `<tr class="mid"><td><strong>${esc(p.id)}</strong>${p.label ? ` <span class="muted">${esc(p.label)}</span>` : ""}${d.node.beacon === p.id ? ` ${chip("beacon", "primary")}` : ""}</td>
@@ -1008,12 +1021,144 @@ function channelCard(c) {
   });
 }
 
+const INST = { supply: "Supply", die_temp: "Chip temperature", hall: "Hall sensor" };
+const SPANS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000];
+
+function instCard(node, d) {
+  const op = can("operator");
+  return card({
+    header: `<div class="grow"><h3 class="h-lg">Instruments</h3><p class="tiny muted">Sensors inside the ${esc(d.node.board)}'s own chip, read by its firmware</p></div>${toggle(Boolean(S.instLive[node]), `data-change="instlive" data-node="${esc(node)}"`, "Live")}${btn("Read", { act: "readinst", data: { node } })}`,
+    body: `<div class="grid g4">${d.instruments.map((i) => card({ body: `<div class="stack tight">
+        <p class="stat-title">${esc(INST[i.type] ?? words(i.type))} <span class="muted">${esc(i.id)}${i.err ? ` · ±${esc(i.err)} ${esc(unitText(i.unit))}` : i.err_pct ? ` · ±${esc(i.err_pct)} %` : ""}</span></p>
+        <p class="stat-value mono" data-val="${esc(`${node}:${i.id}`)}">${valueText(S.values[`${node}:${i.id}`])}</p>
+        ${i.note ? `<p class="tiny muted">${esc(i.note)}</p>` : ""}
+        ${op ? `<div>${btn("Record", { act: "record", data: { node, pin: i.id, as: "a", unit: unitText(i.unit) }, variant: "light", color: "primary" })}</div>` : ""}
+      </div>` })).join("")}</div>`,
+  });
+}
+
+async function readInst(node) {
+  const d = await describe(node);
+  for (const i of d.instruments ?? []) await readPin(node, i.id, "a");
+}
+
+async function instLoop(node) {
+  const tok = S.instLive[node];
+  const on = () => S.instLive[node] === tok && S.nav === "device" && S.q.node === node && online(node);
+  while (on()) {
+    await readInst(node);
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  if (S.instLive[node] === tok) delete S.instLive[node];
+}
+
+function scopeCard(node, d) {
+  const pins = d.pins.filter((p) => p.caps.includes("ain") && !d.reserved.includes(p.id));
+  if (!can("operator")) return card({ header: `<h3 class="h-lg">Scope</h3>`, body: '<p class="small muted">An operator runs the scope: a capture can drive a pin, so the hub counts it as a write.</p>' });
+  const sc = S.scope[node] ?? {};
+  const vio = d.node.vio;
+  return card({
+    header: `<div class="grow"><h3 class="h-lg">Scope</h3><p class="tiny muted">Real ADC samples from one pin, and the hub's measurements of the trace</p></div>`,
+    body: `<div class="stack">
+      <form class="row wrap" data-form="scope" data-node="${esc(node)}">
+        <label class="field sm" title="pin">${select("pin", pins.map((p) => [p.id, `${p.id}${p.label ? ` ${p.label}` : ""}${p.ain?.wifi_off ? " (Wi-Fi off only)" : ""}`]), sc.pin ?? pins[0].id)}</label>
+        <label class="field sm" title="time span">${select("span", SPANS.map((ms) => [ms, ms >= 1000 ? `${ms / 1000} s` : `${ms} ms`]), sc.span ?? 20)}</label>
+        <label class="field sm" title="trigger">${select("edge", [["rise", "trigger on rise"], ["fall", "trigger on fall"], ["", "free-running"]], sc.edge ?? (d.node.driver ? "" : "rise"))}</label>
+        <label class="field sm duty" title="trigger level, volts"><input class="field-input" name="level" type="number" step="0.05" min="0" max="${vio}" value="${sc.level ?? +(vio / 2).toFixed(2)}"></label><span class="tiny muted">V</span>
+        ${btn("Single", { act: "scopeone", data: { node } })}
+        ${btn("Run", { act: "scoperun", data: { node }, color: "primary" })}
+        ${btn("Stop", { act: "scopestop", data: { node } })}
+      </form>
+      <div data-scope="${esc(node)}">${scopeView(node)}</div>
+    </div>`,
+  });
+}
+
+function scopeView(node) {
+  const sc = S.scope[node] ?? {};
+  const c = sc.cap;
+  const state = sc.run ? `<p>${chip("running", "success")}</p>` : "";
+  const err = sc.err ? `<p class="err">${esc(sc.err)}</p>` : "";
+  if (!c) return `${state}${err}${err ? "" : '<p class="small muted">Press Single for one trace or Run for a live one. The scope samples as fast as the span allows; with a trigger it waits up to the span (at least 200 ms) for the crossing, then runs free.</p>'}`;
+  const vals = c.vals ?? [];
+  const vio = S.describe[node]?.node.vio ?? 5;
+  const W = 800, H = 280, L = 48, R = 12, T = 12, B = 28;
+  const n = vals.length, dt = c.dt_us / 1000, span = (n - 1) * dt;
+  const tr = sc.args.trigger;
+  const zero = c.triggered ? c.trigger_index : 0;
+  const hi = Math.max(vio, ...vals);
+  const x = (i) => L + (i / Math.max(1, n - 1)) * (W - L - R);
+  const y = (v) => T + (1 - v / hi) * (H - T - B);
+  const fmtT = (ms) => (span < 2 ? `${Math.round(ms * 1000)} µs` : `${+ms.toFixed(span < 20 ? 2 : span < 200 ? 1 : 0)} ms`);
+  let grid = "";
+  for (let v = 0; v <= hi + 1e-9; v += hi > 4 ? 1 : 0.5) grid += `<line class="grid-line" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${+v.toFixed(1)} V</text>`;
+  for (let k = 0; k <= 10; k++) {
+    const i = ((n - 1) * k) / 10;
+    grid += `<line class="grid-line" x1="${x(i)}" x2="${x(i)}" y1="${T}" y2="${H - B}"/>`;
+    if (k % 2 === 0) grid += `<text class="axis" x="${x(i)}" y="${H - 8}" text-anchor="${k === 0 ? "start" : k === 10 ? "end" : "middle"}">${esc(fmtT((i - zero) * dt))}</text>`;
+  }
+  const line = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const marks = tr ? `<line class="th" x1="${L}" x2="${W - R}" y1="${y(tr.level_v)}" y2="${y(tr.level_v)}"/>${c.triggered ? `<line class="th" x1="${x(zero)}" x2="${x(zero)}" y1="${T}" y2="${H - B}"/>` : ""}` : "";
+  const m = [
+    ["Frequency", c.freq_hz !== undefined ? qty(c.freq_hz, "Hz") : "–"],
+    ["Vpp", `${fmtNum(c.vpp)} V`],
+    ["Mean", `${fmtNum(c.mean)} V`],
+    ["RMS", `${fmtNum(c.rms)} V`],
+    ["Duty", c.duty !== undefined ? `${fmtNum(c.duty * 100)} %` : "–"],
+    ["Rise 10-90 %", c.rise_us !== undefined ? fmtUs(c.rise_us) : "–"],
+    ["Fall 90-10 %", c.fall_us !== undefined ? fmtUs(c.fall_us) : "–"],
+    ["Min / max", `${fmtNum(c.min)} / ${fmtNum(c.max)} V`],
+  ];
+  const trig = !tr ? "free-running" : c.triggered ? `triggered on ${tr.edge} through ${fmtNum(tr.level_v)} V; time 0 is the trigger` : `no ${tr.edge} through ${fmtNum(tr.level_v)} V within ${tr.timeout_ms} ms, so the trace runs free`;
+  return `${state}${err}<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(c.pin ?? sc.args.pin)} trace">${grid}<polyline class="line" points="${line}"/>${marks}</svg>
+    <p class="tiny muted">${esc(sc.args.pin)}: ${n} samples at ${esc(fmtNum(c.actual_sps ?? 1e6 / c.dt_us))} S/s${c.bits ? `, ${c.bits}-bit` : ""}, ${esc(fmtUs(c.dt_us))} apart, the finest time it resolves; each sample ±${esc(fmtNum(c.err))} V · ${esc(trig)} · ${esc(fmtTime(sc.at))}</p>
+    <div class="grid g4">${m.map(([k, v]) => stat(k, v)).join("")}</div>`;
+}
+
+function drawScope(node) {
+  const el = $(`[data-scope="${CSS.escape(node)}"]`);
+  if (el) el.innerHTML = scopeView(node);
+}
+
+async function scopeShot(node) {
+  const f = $(`[data-form="scope"][data-node="${CSS.escape(node)}"]`);
+  const sc = S.scope[node] ?? (S.scope[node] = {});
+  const d = S.describe[node];
+  if (!f || !d?.pins) { sc.run = null; return; }
+  const el = f.elements;
+  const p = d.pins.find((x) => x.id === el.pin.value);
+  const dur = Number(el.span.value);
+  const args = { node, pin: p.id, sps: Math.min(p.ain?.max_sps ?? 1000, Math.floor((((d.node.max_samples ?? 500) - 2) * 1000) / dur)), dur_ms: dur, trace: true, file: false };
+  if (el.edge.value) args.trigger = { level_v: Number(el.level.value), edge: el.edge.value, timeout_ms: Math.min(1000, Math.max(200, dur)) };
+  Object.assign(sc, { pin: p.id, span: dur, edge: el.edge.value, level: el.level.value });
+  try {
+    sc.cap = await call("capture", args);
+    sc.args = args;
+    sc.at = Date.now();
+    sc.err = "";
+  } catch (e) {
+    sc.err = e.message;
+    sc.run = null;
+  }
+  drawScope(node);
+}
+
+async function scopeLoop(node) {
+  const sc = S.scope[node];
+  const tok = sc.run;
+  while (sc.run === tok && S.nav === "device" && S.q.node === node && online(node)) await scopeShot(node);
+  if (sc.run === tok) sc.run = null;
+  drawScope(node);
+}
+
 VIEWS.device = {
   title: () => devName(S.q.node ?? ""),
   html: () => `<div class="stack">
     <div>${btn("← Device Fleet", { act: "go", data: { nav: "devices" }, variant: "light" })}</div>
     <div data-part="head"></div>
     <div data-part="pins"></div>
+    <div data-part="inst"></div>
+    <div data-part="scope"></div>
     <div data-part="survey"></div>
     <div data-part="chans"></div>
     ${card({ header: `<h3 class="h-lg">Recent activity</h3>`, body: `<div data-part="activity"></div>` })}
@@ -1058,6 +1203,14 @@ VIEWS.device = {
           ${d.node.notes?.length ? `<details><summary class="tiny">What the hub does for this board</summary><ul class="tiny soft">${d.node.notes.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}`,
       });
     },
+    inst: () => {
+      const d = online(S.q.node) && S.describe[S.q.node];
+      return d?.instruments?.length ? instCard(S.q.node, d) : "";
+    },
+    scope: () => {
+      const d = online(S.q.node) && S.describe[S.q.node];
+      return d?.pins && d.pins.some((p) => p.caps.includes("ain") && !d.reserved.includes(p.id)) ? scopeCard(S.q.node, d) : "";
+    },
     survey: () => {
       const node = S.q.node;
       if (S.busy[node]) return card({ body: spinner(S.busy[node]) });
@@ -1071,7 +1224,7 @@ VIEWS.device = {
     },
     activity: () => logList(S.st.audit.filter((e) => e.node === S.q.node).slice(-15).reverse(), "Nothing has happened on this device yet."),
   },
-  deps: { head: ["nodes", "config"], pins: ["nodes", "describe"], survey: ["views"], chans: ["config"], activity: ["audit", "config"] },
+  deps: { head: ["nodes", "config"], pins: ["nodes", "describe"], inst: ["nodes", "describe"], scope: ["nodes", "describe"], survey: ["views"], chans: ["config"], activity: ["audit", "config"] },
 };
 
 async function loadDescribe(node) {
@@ -1478,7 +1631,7 @@ function setValue(key, v) {
 
 async function readPin(node, pin, as) {
   const key = `${node}:${pin}`;
-  try { setValue(key, await call("read", { node, pin, as, n: as === "a" ? 16 : 1 })); }
+  try { setValue(key, await call("read", { node, pin, as, n: as === "a" || as === "t" ? 16 : 1 })); }
   catch (e) { setValue(key, { error: e.message }); }
 }
 
@@ -1589,14 +1742,49 @@ const ACT = {
   }),
   pwm: (el) => busy(el, async () => {
     const { node, pin } = el.dataset;
-    const duty = Number($(`[data-duty="${CSS.escape(`${node}:${pin}`)}"]`).value);
+    const key = `${node}:${pin}`;
+    const duty = Number($(`[data-duty="${CSS.escape(key)}"]`).value);
     if (!(duty >= 0 && duty <= 100)) throw new Error("duty is 0 to 100 %");
-    await call("write", { node, pin, pwm: { hz: 490, duty: duty / 100 } });
-    toast(`${pin} runs PWM at ${duty}% (490 Hz)`);
+    const hzEl = $(`[data-hz="${CSS.escape(key)}"]`);
+    const hz = Number(hzEl ? hzEl.value : el.dataset.hz);
+    const r = await call("write", { node, pin, pwm: { hz, duty: duty / 100 } });
+    const o = r.pwm ?? { hz, duty: duty / 100 };
+    setValue(key, { out: `PWM ${qty(o.hz, "Hz")} at ${fmtNum(o.duty * 100)} %${o.bits ? `, ${o.bits}-bit` : ""}` });
   }),
+  aout: (el) => busy(el, async () => {
+    const { node, pin } = el.dataset;
+    const key = `${node}:${pin}`;
+    const v = Number($(`[data-aout="${CSS.escape(key)}"]`).value);
+    const r = await call("write", { node, pin, aout: v });
+    setValue(key, { out: r.aout ? `DAC ${fmtNum(r.aout.v)} V (code ${r.aout.code})` : `DAC ${fmtNum(v)} V` });
+  }),
+  sine: (el) => busy(el, async () => {
+    const { node, pin } = el.dataset;
+    const key = `${node}:${pin}`;
+    const hz = Number($(`[data-sine="${CSS.escape(key)}"]`).value);
+    const r = await call("write", { node, pin, sine: { hz } });
+    const s = r.sine ?? { hz };
+    setValue(key, { out: `sine ${qty(s.hz, "Hz")}${s.vpp ? `, ${fmtNum(s.vpp)} Vpp around ${fmtNum(s.offset_v)} V` : ""}` });
+  }),
+  readinst: (el) => busy(el, () => readInst(el.dataset.node)),
+  scopeone: (el) => busy(el, () => scopeShot(el.dataset.node)),
+  scoperun: (el) => {
+    const node = el.dataset.node;
+    const sc = S.scope[node] ?? (S.scope[node] = {});
+    if (sc.run) return;
+    sc.run = {};
+    drawScope(node);
+    scopeLoop(node);
+  },
+  scopestop: (el) => {
+    const sc = S.scope[el.dataset.node];
+    if (sc) sc.run = null;
+    drawScope(el.dataset.node);
+  },
   record: (el) => busy(el, async () => {
     const { node, pin, as } = el.dataset;
-    const c = await api("POST", "/api/channels", { node, pin, as, label: `${devName(node)} ${pin}`, unit: as === "a" ? "V" : "", scale: 1, offset: 0, interval_ms: 2000 });
+    const unit = el.dataset.unit ?? (as === "a" ? "V" : "");
+    const c = await api("POST", "/api/channels", { node, pin, as, label: `${devName(node)} ${pin}`, unit, scale: 1, offset: 0, interval_ms: 2000 });
     toast(`Recording ${c.label} every 2 s; it is on Live Telemetry`);
   }),
   rmchan: async (el) => {
@@ -1758,6 +1946,11 @@ const CHANGE = {
     const d = device(el.value);
     el.form.elements.name.value = d?.name ?? "";
     el.form.elements.description.value = d?.description ?? "";
+  },
+  instlive: (el) => {
+    const node = el.dataset.node;
+    if (el.checked) { S.instLive[node] = {}; instLoop(node); }
+    else delete S.instLive[node];
   },
   setmode: async (el) => {
     const { node, pin } = el.dataset;
