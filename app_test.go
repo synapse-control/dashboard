@@ -37,6 +37,8 @@ func fakeHub(t *testing.T) (*httptest.Server, string) {
 			io.WriteString(w, `[{"node":"uno","board":"arduino-uno","transport":"ws"}]`)
 		case "/mcp/call/wire_log":
 			io.WriteString(w, `{"text":"< {\"data\":{\"beacon\":3}}\n< {\"data\":{\"beacon\":0}}\n"}`)
+		case "/mcp/call/read":
+			io.WriteString(w, `{"pin":"A0","v":3.1,"unit":"V","err":0.25}`)
 		case "/mcp/call/write":
 			if tok != "W" {
 				w.WriteHeader(http.StatusForbidden)
@@ -96,6 +98,18 @@ func callAPI(t *testing.T, c *http.Client, base, tool, body string, h map[string
 	return res.StatusCode, string(b)
 }
 
+func send(t *testing.T, c *http.Client, method, u, body string) (int, string) {
+	req, _ := http.NewRequest(method, u, strings.NewReader(body))
+	req.Header.Set("content-type", "application/json")
+	res, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	return res.StatusCode, string(b)
+}
+
 func TestFirstStartSetupThenRoles(t *testing.T) {
 	srv, _ := testApp(t)
 	anon := client()
@@ -110,7 +124,9 @@ func TestFirstStartSetupThenRoles(t *testing.T) {
 	if r := post(t, anon, srv.URL+"/setup", url.Values{"name": {"evil"}, "password": {"correcthorse1"}, "confirm": {"correcthorse1"}}); r.Header.Get("location") != "/login" {
 		t.Fatal("a second setup must be refused")
 	}
-	post(t, adm, srv.URL+"/users", url.Values{"name": {"vic"}, "password": {"viewerpass1"}, "role": {"viewer"}})
+	if code, body := send(t, adm, "POST", srv.URL+"/api/users", `{"name":"vic","password":"viewerpass1","role":"viewer"}`); code != http.StatusCreated {
+		t.Fatalf("add viewer: %d %s", code, body)
+	}
 	view := client()
 	if r := post(t, view, srv.URL+"/login", url.Values{"name": {"vic"}, "password": {"viewerpass1"}}); r.StatusCode != http.StatusFound {
 		t.Fatalf("viewer login: %d", r.StatusCode)
@@ -130,21 +146,48 @@ func TestFirstStartSetupThenRoles(t *testing.T) {
 	if code, _ := callAPI(t, adm, srv.URL, "../x", `{}`, nil); code == 200 {
 		t.Fatal("a bad tool name must not reach the hub")
 	}
-	res, _ = view.Get(srv.URL + "/users")
-	if res.StatusCode != http.StatusForbidden {
-		t.Fatalf("viewer on /users: %d", res.StatusCode)
+	if code, _ := send(t, view, "POST", srv.URL+"/api/users", `{"name":"eve","password":"viewerpass1","role":"admin"}`); code != http.StatusForbidden {
+		t.Fatalf("viewer adding people: %d", code)
+	}
+	if code, _ := send(t, view, "POST", srv.URL+"/api/channels", `{"node":"uno","pin":"A0","as":"a","interval_ms":1000}`); code != http.StatusForbidden {
+		t.Fatalf("viewer adding a channel: %d", code)
 	}
 	for _, c := range []struct {
 		cl   *http.Client
 		want bool
 	}{{adm, true}, {view, false}} {
-		res, _ := c.cl.Get(srv.URL + "/add")
-		b, _ := io.ReadAll(res.Body)
-		res.Body.Close()
-		if got := strings.Contains(string(b), "--key K"); got != c.want {
+		_, body := send(t, c.cl, "GET", srv.URL+"/api/state", "")
+		if got := strings.Contains(body, `"node_key":"K"`); got != c.want {
 			t.Fatalf("node key shown=%v, want %v", got, c.want)
 		}
 	}
+}
+
+func TestRuleDrivesPinFromReading(t *testing.T) {
+	srv, a := testApp(t)
+	a.users.add("andrew", "correcthorse1", roleAdmin, true)
+	c := client()
+	post(t, c, srv.URL+"/login", url.Values{"name": {"andrew"}, "password": {"correcthorse1"}})
+	code, body := send(t, c, "POST", srv.URL+"/api/channels", `{"node":"uno","pin":"A0","as":"a","scale":1,"interval_ms":250}`)
+	if code != http.StatusCreated {
+		t.Fatalf("channel: %d %s", code, body)
+	}
+	var ch channel
+	json.Unmarshal([]byte(body), &ch)
+	lamp := `{"name":"lamp","channel":"` + ch.ID + `","op":">","threshold":2.5,"then":{"node":"uno","pin":"D13","mode":"high"},"else":{"node":"uno","pin":"D13","mode":"low"}}`
+	if code, body := send(t, c, "POST", srv.URL+"/api/rules", lamp); code != http.StatusCreated {
+		t.Fatalf("rule: %d %s", code, body)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var r rule
+		a.store.read(func(st *state) { r = st.Rules[0] })
+		if r.Executions == 1 && r.LastResult == "set uno D13 high" && len(a.store.recent(ch.ID)) > 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the rule did not drive D13 high from a 3.1 V reading")
 }
 
 func TestLoginLimit(t *testing.T) {

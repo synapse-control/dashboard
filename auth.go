@@ -22,9 +22,12 @@ import (
 )
 
 const (
-	roleAdmin  = "admin"
-	roleViewer = "viewer"
+	roleAdmin    = "admin"
+	roleOperator = "operator"
+	roleViewer   = "viewer"
 )
+
+var roleRank = map[string]int{roleViewer: 0, roleOperator: 1, roleAdmin: 2}
 
 type user struct {
 	Name string `json:"name"`
@@ -94,8 +97,8 @@ func (s *userStore) add(name, password, role string, onlyIfEmpty bool) error {
 	if len(password) < 10 || len(password) > 72 {
 		return errors.New("a password is 10 to 72 characters")
 	}
-	if role != roleAdmin && role != roleViewer {
-		return errors.New("role is admin or viewer")
+	if _, ok := roleRank[role]; !ok {
+		return errors.New("role is admin, operator or viewer")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {

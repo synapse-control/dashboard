@@ -1,13 +1,16 @@
 {{define "body"}}
-<section class="card narrow">
-  <h1>Sign in</h1>
-  {{if .Local}}
-  <form method="post" action="/login" class="stack">
-    <label>Name <input name="name" autocomplete="username" required autofocus></label>
-    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-    <button type="submit">Sign in</button>
-  </form>
-  {{end}}
-  {{if .OIDC}}<p><a class="button secondary" href="/auth/oidc">Sign in with single sign-on</a></p>{{end}}
+<section class="card">
+  <div class="card-body">
+    <div><h1 class="h-2xl">Sign in</h1><p class="small muted">Synapse Control dashboard</p></div>
+    {{if .Error}}<p class="err" role="alert">{{.Error}}</p>{{end}}
+    {{if .Local}}
+    <form method="post" action="/login">
+      <label class="field"><span class="field-label">Name</span><input class="field-input" name="name" autocomplete="username" required autofocus></label>
+      <label class="field"><span class="field-label">Password</span><input class="field-input" name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn solid primary" type="submit">Sign in</button>
+    </form>
+    {{end}}
+    {{if .OIDC}}<a class="btn flat primary" href="/auth/oidc">Sign in with single sign-on</a>{{end}}
+  </div>
 </section>
 {{end}}

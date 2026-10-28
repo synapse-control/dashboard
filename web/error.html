@@ -1,1 +1,9 @@
-{{define "body"}}<p><a href="/">Back to the nodes</a></p>{{end}}
+{{define "body"}}
+<section class="card">
+  <div class="card-body">
+    <h1 class="h-xl">{{.Title}}</h1>
+    {{if .Error}}<p class="err" role="alert">{{.Error}}</p>{{end}}
+    <a class="btn flat primary" href="/">Back to the dashboard</a>
+  </div>
+</section>
+{{end}}

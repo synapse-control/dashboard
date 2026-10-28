@@ -14,7 +14,7 @@ services:
     #   - "${SERIAL_GID:-984}"
 
   dashboard:
-    image: ghcr.io/synapse-control/dashboard:${SYNAPSE_DASHBOARD_TAG:-0.1}
+    image: ghcr.io/synapse-control/dashboard:${SYNAPSE_DASHBOARD_TAG:-0.2}
     restart: unless-stopped
     depends_on:
       hub:

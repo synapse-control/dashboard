@@ -4,29 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}} · Synapse Control</title>
+<script src="/static/theme.js"></script>
 <link rel="stylesheet" href="/static/app.css">
-<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/favicon.ico">
 </head>
 <body>
-<header class="bar">
-  <a class="brand" href="/"><span class="dot"></span>Synapse Control</a>
-  {{if .User.Name}}
-  <nav>
-    <a href="/">Nodes</a>
-    <a href="/add">Add a board</a>
-    {{if .Admin}}<a href="/users">People</a>{{end}}
-  </nav>
-  <form class="who" method="post" action="/logout">
-    <span>{{.User.Name}} · {{.User.Role}}</span>
-    <button class="link" type="submit">Sign out</button>
-  </form>
-  {{end}}
-</header>
-<main data-admin="{{.Admin}}">
-{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+<header class="navbar"><div class="navbar-inner"><a class="brand" href="/"><img src="/static/favicon.ico" alt="">Synapse Control</a></div></header>
+<main class="auth">
 {{template "body" .}}
 </main>
-<footer>dashboard {{.Version}}</footer>
-<script src="/static/app.js"></script>
 </body>
 </html>{{end}}

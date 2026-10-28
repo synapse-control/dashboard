@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synapse Control</title>
+<script src="/static/theme.js"></script>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="/static/favicon.ico">
+</head>
+<body data-user="{{.User.Name}}" data-role="{{.User.Role}}" data-version="{{.Version}}">
+<header class="navbar"><div class="navbar-inner" id="navbar"></div></header>
+<div class="console">
+  <aside class="sidebar" id="sidebar" role="complementary"></aside>
+  <main class="content">
+    <nav class="crumbs" aria-label="Breadcrumb">Dashboard / <span id="crumb"></span></nav>
+    <div id="view"></div>
+  </main>
+</div>
+<div id="modal-root"></div>
+<div class="toast-root" id="toasts"></div>
+<form id="logout" method="post" action="/logout" hidden></form>
+<script src="/static/app.js"></script>
+</body>
+</html>

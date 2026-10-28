@@ -1,12 +1,14 @@
 {{define "body"}}
-<section class="card narrow">
-  <h1>Set up Synapse Control</h1>
-  <p>Make the first account. It is the admin: it can drive pins, add boards and add people.</p>
-  <form method="post" action="/setup" class="stack">
-    <label>Name <input name="name" autocomplete="username" required autofocus></label>
-    <label>Password (10 characters or more) <input name="password" type="password" autocomplete="new-password" minlength="10" required></label>
-    <label>Password again <input name="confirm" type="password" autocomplete="new-password" minlength="10" required></label>
-    <button type="submit">Create the admin</button>
-  </form>
+<section class="card">
+  <div class="card-body">
+    <div><h1 class="h-2xl">Set up Synapse Control</h1><p class="small muted">Make the first account. It is the admin: it drives pins, brings in boards, writes rules and adds people.</p></div>
+    {{if .Error}}<p class="err" role="alert">{{.Error}}</p>{{end}}
+    <form method="post" action="/setup">
+      <label class="field"><span class="field-label">Name</span><input class="field-input" name="name" autocomplete="username" required autofocus></label>
+      <label class="field"><span class="field-label">Password (10 characters or more)</span><input class="field-input" name="password" type="password" autocomplete="new-password" minlength="10" required></label>
+      <label class="field"><span class="field-label">Password again</span><input class="field-input" name="confirm" type="password" autocomplete="new-password" minlength="10" required></label>
+      <button class="btn solid primary" type="submit">Create the admin</button>
+    </form>
+  </div>
 </section>
 {{end}}

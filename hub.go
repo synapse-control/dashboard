@@ -224,7 +224,9 @@ func (a *app) pollLoop(ctx context.Context) {
 	t := time.NewTicker(a.cfg.pollEvery)
 	defer t.Stop()
 	for {
-		a.live.publish(a.hub.poll(ctx))
+		s := a.hub.poll(ctx)
+		a.live.publish(s)
+		a.observe(s)
 		select {
 		case <-ctx.Done():
 			return

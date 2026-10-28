@@ -26,6 +26,9 @@ type app struct {
 	cfg          config
 	hub          *hubClient
 	live         *broadcaster
+	feed         *feed
+	eng          *engine
+	store        *store
 	users        *userStore
 	sess         *sessions
 	oidc         *oidcLogin
@@ -64,10 +67,17 @@ func newApp(ctx context.Context, cfg config) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
+	st, err := openStore(cfg.dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard state in %s: %w", cfg.dataDir, err)
+	}
 	a := &app{
 		cfg:          cfg,
 		hub:          &hubClient{base: cfg.hubURL, tokenDir: cfg.tokenDir, http: &http.Client{Timeout: 60 * time.Second}},
 		live:         newBroadcaster(),
+		feed:         newFeed(),
+		eng:          newEngine(),
+		store:        st,
 		users:        users,
 		sess:         &sessions{key: key, secure: strings.HasPrefix(cfg.publicURL, "https://")},
 		limit:        &limiter{hits: map[string][]time.Time{}},
@@ -83,10 +93,14 @@ func newApp(ctx context.Context, cfg config) (*app, error) {
 			return nil, fmt.Errorf("OIDC_ISSUER %s: %w", cfg.oidcIssuer, err)
 		}
 	}
-	for _, p := range []string{"login", "setup", "nodes", "node", "add", "users", "error"} {
+	for _, p := range []string{"login", "setup", "error"} {
 		a.pages[p] = template.Must(template.ParseFS(webFS, "web/layout.html", "web/"+p+".html"))
 	}
+	a.pages["dashboard"] = template.Must(template.ParseFS(webFS, "web/dashboard.html"))
 	go a.pollLoop(ctx)
+	go a.sampleLoop(ctx)
+	go a.hookLoop(ctx)
+	go a.pruneLoop(ctx)
 	return a, nil
 }
 
@@ -104,14 +118,29 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /logout", a.logout)
 	mux.HandleFunc("GET /auth/oidc", a.needOIDC(a.oidcStart))
 	mux.HandleFunc("GET "+a.callbackPath, a.needOIDC(a.oidcCallback))
-	mux.HandleFunc("GET /{$}", a.signedIn(a.nodesPage))
-	mux.HandleFunc("GET /node/{name}", a.signedIn(a.nodePage))
-	mux.HandleFunc("GET /add", a.signedIn(a.addPage))
-	mux.HandleFunc("GET /users", a.admin(a.usersPage))
-	mux.HandleFunc("POST /users", a.admin(a.usersAdd))
-	mux.HandleFunc("POST /users/{name}/delete", a.admin(a.usersDelete))
+	mux.HandleFunc("GET /{$}", a.signedIn(a.dashboardPage))
 	mux.HandleFunc("GET /events", a.signedIn(a.events))
 	mux.HandleFunc("POST /api/call/{tool}", a.signedIn(a.apiCall))
+	mux.HandleFunc("GET /api/state", a.signedIn(a.apiState))
+	mux.HandleFunc("GET /api/history", a.signedIn(a.apiHistory))
+	mux.HandleFunc("GET /api/history.csv", a.signedIn(a.apiHistoryCSV))
+	mux.HandleFunc("POST /api/alerts/seen", a.signedIn(a.apiSeen))
+	mux.HandleFunc("PUT /api/devices/{node}", a.role(roleOperator, a.apiDeviceEdit))
+	mux.HandleFunc("DELETE /api/devices/{node}", a.role(roleAdmin, a.apiDeviceForget))
+	mux.HandleFunc("POST /api/channels", a.role(roleOperator, a.apiChannelAdd))
+	mux.HandleFunc("PUT /api/channels/{id}", a.role(roleOperator, a.apiChannelEdit))
+	mux.HandleFunc("DELETE /api/channels/{id}", a.role(roleOperator, a.apiChannelDelete))
+	mux.HandleFunc("POST /api/rules", a.role(roleOperator, a.apiRuleAdd))
+	mux.HandleFunc("PUT /api/rules/{id}", a.role(roleOperator, a.apiRuleEdit))
+	mux.HandleFunc("DELETE /api/rules/{id}", a.role(roleOperator, a.apiRuleDelete))
+	mux.HandleFunc("POST /api/simulate", a.signedIn(a.apiSimulate))
+	mux.HandleFunc("PUT /api/settings", a.role(roleAdmin, a.apiSettings))
+	mux.HandleFunc("POST /api/webhooks", a.role(roleAdmin, a.apiHookAdd))
+	mux.HandleFunc("PUT /api/webhooks/{id}", a.role(roleAdmin, a.apiHookEdit))
+	mux.HandleFunc("DELETE /api/webhooks/{id}", a.role(roleAdmin, a.apiHookDelete))
+	mux.HandleFunc("POST /api/webhooks/{id}/test", a.role(roleAdmin, a.apiHookTest))
+	mux.HandleFunc("POST /api/users", a.role(roleAdmin, a.apiUserAdd))
+	mux.HandleFunc("DELETE /api/users/{name}", a.role(roleAdmin, a.apiUserDelete))
 	return headers(http.NewCrossOriginProtection().Handler(mux))
 }
 
@@ -173,16 +202,6 @@ func (a *app) signedIn(h func(http.ResponseWriter, *http.Request, session)) http
 	}
 }
 
-func (a *app) admin(h func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
-	return a.signedIn(func(w http.ResponseWriter, r *http.Request, s session) {
-		if s.Role != roleAdmin {
-			a.fail(w, r, http.StatusForbidden, "Only an admin can do that.")
-			return
-		}
-		h(w, r, s)
-	})
-}
-
 func (a *app) needOIDC(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if a.oidc == nil {
@@ -225,7 +244,7 @@ func (a *app) setupSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.sess.start(w, name, roleAdmin, "local", 7*24*time.Hour)
-	http.Redirect(w, r, "/add", http.StatusFound)
+	http.Redirect(w, r, "/?nav=provisioning", http.StatusFound)
 }
 
 func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
@@ -265,18 +284,12 @@ func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
-func (a *app) nodesPage(w http.ResponseWriter, r *http.Request, s session) {
-	a.render(w, http.StatusOK, "nodes", page{Title: "Nodes", User: s})
-}
-
-func (a *app) nodePage(w http.ResponseWriter, r *http.Request, s session) {
-	a.render(w, http.StatusOK, "node", page{Title: r.PathValue("name"), User: s, Data: r.PathValue("name")})
-}
-
-type addData struct {
-	NodesURL string
-	Key      string
-	Image    string
+func (a *app) dashboardPage(w http.ResponseWriter, r *http.Request, s session) {
+	w.Header().Set("content-type", "text/html; charset=utf-8")
+	w.Header().Set("cache-control", "no-store")
+	if err := a.pages["dashboard"].Execute(w, page{Title: "Dashboard", User: s, Version: version}); err != nil {
+		log.Printf("render dashboard: %v", err)
+	}
 }
 
 func (a *app) nodesURL(r *http.Request) string {
@@ -291,37 +304,6 @@ func (a *app) nodesURL(r *http.Request) string {
 	return "ws" + strings.TrimPrefix(base, "http") + "/nodes"
 }
 
-func (a *app) addPage(w http.ResponseWriter, r *http.Request, s session) {
-	d := addData{NodesURL: a.nodesURL(r), Key: "<node key: ask an admin>", Image: env("SYNAPSE_HUB_IMAGE", "ghcr.io/synapse-control/hub:0.2")}
-	if s.Role == roleAdmin {
-		if k := a.hub.nodeKey(); k != "" {
-			d.Key = k
-		}
-	}
-	a.render(w, http.StatusOK, "add", page{Title: "Add a board", User: s, Data: d})
-}
-
-func (a *app) usersPage(w http.ResponseWriter, r *http.Request, s session) {
-	a.render(w, http.StatusOK, "users", page{Title: "People", User: s, Data: a.users.list(), Error: r.URL.Query().Get("error")})
-}
-
-func (a *app) usersAdd(w http.ResponseWriter, r *http.Request, s session) {
-	err := a.users.add(strings.TrimSpace(r.PostFormValue("name")), r.PostFormValue("password"), r.PostFormValue("role"), false)
-	if err != nil {
-		http.Redirect(w, r, "/users?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
-		return
-	}
-	http.Redirect(w, r, "/users", http.StatusSeeOther)
-}
-
-func (a *app) usersDelete(w http.ResponseWriter, r *http.Request, s session) {
-	if err := a.users.remove(r.PathValue("name")); err != nil {
-		http.Redirect(w, r, "/users?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
-		return
-	}
-	http.Redirect(w, r, "/users", http.StatusSeeOther)
-}
-
 func (a *app) events(w http.ResponseWriter, r *http.Request, s session) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
@@ -334,6 +316,8 @@ func (a *app) events(w http.ResponseWriter, r *http.Request, s session) {
 	h.Set("x-accel-buffering", "no")
 	c, done := a.live.subscribe()
 	defer done()
+	f, unsub := a.feed.subscribe()
+	defer unsub()
 	ping := time.NewTicker(25 * time.Second)
 	defer ping.Stop()
 	fmt.Fprint(w, "retry: 2000\n\n")
@@ -343,7 +327,10 @@ func (a *app) events(w http.ResponseWriter, r *http.Request, s session) {
 		case <-r.Context().Done():
 			return
 		case data := <-c:
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", data)
+			fl.Flush()
+		case data := <-f:
+			fmt.Fprintf(w, "event: feed\ndata: %s\n\n", data)
 			fl.Flush()
 		case <-ping.C:
 			fmt.Fprint(w, ": ping\n\n")
@@ -366,7 +353,7 @@ func (a *app) apiCall(w http.ResponseWriter, r *http.Request, s session) {
 		http.Error(w, `{"error":"the body must be JSON"}`, http.StatusBadRequest)
 		return
 	}
-	status, body, err := a.hub.call(r.Context(), tool, s.Role == roleAdmin, "user:"+s.Name, args)
+	status, body, err := a.hub.call(r.Context(), tool, roleRank[s.Role] >= roleRank[roleOperator], "user:"+s.Name, args)
 	if err != nil {
 		w.WriteHeader(http.StatusBadGateway)
 		json.NewEncoder(w).Encode(map[string]string{"error": "hub unreachable: " + err.Error()})
