@@ -1,0 +1,76 @@
+web/static/app.css
+  s_f029ed386c5677::t_7eb149b0e42990 287-296
+README.md
+  s_f029ed386c5677::t_f5be23a327124d 16-17
+  s_f029ed386c5677::t_174bf9e002cb00 27
+  s_f029ed386c5677::t_08b7e6c970e6cf 70-73
+  s_f029ed386c5677::t_2da76a93c73cd2 90-107
+  s_f029ed386c5677::t_a70d43402abe40 121
+  s_f029ed386c5677::t_c88c79a781a1d4 135-137
+  s_f029ed386c5677::t_eaecb46b53325f 55
+  s_f029ed386c5677::t_2d77688599dcd3 24
+  s_f029ed386c5677::t_887ddbfa2f2d16 116
+.env.example
+  s_f029ed386c5677::t_f759cbd166a542 3-5,7
+web/static/serial.js
+  s_f029ed386c5677::t_02ae292c202cd0 222
+  s_f029ed386c5677::t_50f41698c37ff2 124
+  s_f029ed386c5677::t_75476bb739fd85 190-199,201
+  s_f029ed386c5677::t_d6a36046d80050 237
+  s_f029ed386c5677::t_dae21775228c10 243
+  s_f029ed386c5677::t_f18a132150a749 137,139
+  s_f029ed386c5677::t_5cb6091bde67a4 1-123,125-136,138,140-189,200,202-221,223-236,238-242,244-249
+live.go
+  s_f029ed386c5677::t_bb819f6d74d86d 180-184,186-188,190-192,194,196-197,200-201,203-204
+  s_f029ed386c5677::t_b5aebf295063eb 104-106
+  s_f029ed386c5677::t_14e7748669bdd0 185,189,193,195,198-199,202
+app.go
+  s_f029ed386c5677::t_8d051d6461bc64 297-299
+  s_f029ed386c5677::t_fa80bbd1519855 76
+  s_f029ed386c5677::t_1827fda188fbcc 114
+compose.yaml
+  s_f029ed386c5677::t_dcf8758b93b7af 36
+  s_f029ed386c5677::t_2c4a029eaf322d 5,9-14,17-23
+  s_f029ed386c5677::t_fcf26243b55431 26
+main.go
+  s_f029ed386c5677::t_af00833c175047 23
+  s_f029ed386c5677::t_1ed38e70407dad 48
+api.go
+  s_f029ed386c5677::t_f3c8c11e29a492 98
+web/static/app.js
+  s_f029ed386c5677::t_b793d706e8fc0c 182
+  s_f029ed386c5677::t_bc7e00f970ab3a 397
+  s_f029ed386c5677::t_26cba7f349fe4e 831
+  s_f029ed386c5677::t_3c2ef62cf61f4b 1476-1487
+  s_f029ed386c5677::t_34c6ea04b9b978 1032,1037-1043,1045,1047-1049,1052-1070
+  s_f029ed386c5677::t_413a7ca9166a9b 910-912
+  s_f029ed386c5677::t_fcbc872f5a4d41 816,819,822-823
+  s_f029ed386c5677::t_e157a5f92fe6e3 287
+  s_f029ed386c5677::t_093d971f3dd4a2 280
+  s_f029ed386c5677::t_d6a119de8d7fc4 326
+  s_f029ed386c5677::t_c10a7048b42c5a 482-642,644-809
+  s_f029ed386c5677::t_6f86a7b62d9354 643
+  s_f029ed386c5677::t_19eba7c4990ed5 288
+  s_f029ed386c5677::t_58754be00ea338 876
+  s_f029ed386c5677::t_d96eb1daa30e58 1602
+web/static/vendor/LICENSES.txt
+  s_f029ed386c5677::t_4f86916737e78d 1-252
+web/static/vendor/esptool.js
+  s_f029ed386c5677::t_3187de36c606ef 1-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "35e13aa7273d4eb662f73fe69c58fca03363c9cd",
+  "prompts": {},
+  "sessions": {
+    "s_f029ed386c5677": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026982f1-ff1f-4549-b84f-10fb27c7086a",
+        "model": "unknown"
+      },
+      "human_author": "jamubc <150970140+jamubc@users.noreply.github.com>"
+    }
+  }
+}
